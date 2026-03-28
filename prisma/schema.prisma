@@ -1,0 +1,195 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum ProposalStatus {
+  DRAFT
+  SENT
+  VIEWED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum Currency {
+  AUD
+  USD
+}
+
+enum BillingCadence {
+  ONE_OFF
+  MONTHLY
+  QUARTERLY
+}
+
+enum RecurringStartMode {
+  IMMEDIATE
+  ON_ACCEPTANCE
+  SPECIFIC_DATE
+}
+
+enum PaymentTerms {
+  UPON_RECEIPT
+  NET7
+  NET14
+  NET30
+}
+
+enum RoundingMode {
+  DOLLAR
+  CENTS
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model BusinessSettings {
+  id              String      @id @default(cuid())
+  userId          String      @unique @map("user_id")
+  businessName    String      @default("") @map("business_name")
+  abn             String?
+  gstRegistered   Boolean     @default(false) @map("gst_registered")
+  defaultCurrency Currency    @default(AUD) @map("default_currency")
+  invoicePrefix   String      @default("INV") @map("invoice_prefix")
+  invoiceSeq      Int         @default(0) @map("invoice_seq") // incremented atomically on send
+  roundingMode    RoundingMode @default(CENTS) @map("rounding_mode")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  @@map("business_settings")
+}
+
+model Client {
+  id        String     @id @default(cuid())
+  name      String
+  email     String
+  company   String?
+  phone     String?
+  address   String?
+  notes     String?
+  createdBy String     @map("created_by")
+  proposals Proposal[]
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  @@unique([email, createdBy])
+  @@map("clients")
+}
+
+model Proposal {
+  id          String         @id @default(cuid())
+  title       String
+  clientName  String         @map("client_name")
+  clientEmail String         @map("client_email")
+  clientAbn   String?        @map("client_abn")
+  content     Json           // TipTap document (narrative content only)
+  status      ProposalStatus @default(DRAFT)
+
+  // Pricing data — structured JSON replacing flat pricingItems
+  // Shape: { sections: PricingSection[], items: PricingItem[] }
+  pricingData Json?          @map("pricing_data")
+  totalValue  Float?         @map("total_value") // computed total in proposal currency
+
+  // Currency & tax
+  currency        Currency     @default(AUD)
+  exchangeRate    Float        @default(1.0) @map("exchange_rate") // locked at creation; AUD per 1 USD
+  gstEnabled      Boolean      @default(false) @map("gst_enabled")
+  roundingMode    RoundingMode @default(CENTS) @map("rounding_mode")
+
+  // Discounts
+  discountType    String?      @map("discount_type")  // "percentage" | "fixed"
+  discountValue   Float?       @map("discount_value")
+  showDiscount    Boolean      @default(true) @map("show_discount")
+
+  // Deposit / upfront payment
+  depositType     String?      @map("deposit_type")   // "percentage" | "fixed"
+  depositValue    Float?       @map("deposit_value")
+
+  // Billing & payment terms
+  billingCadence      BillingCadence    @default(ONE_OFF) @map("billing_cadence")
+  recurringStartMode  RecurringStartMode? @map("recurring_start_mode")
+  recurringStartDate  DateTime?          @map("recurring_start_date")
+  fixedTermMonths     Int?               @map("fixed_term_months") // null = open-ended
+  paymentTerms        PaymentTerms       @default(NET30) @map("payment_terms")
+  latePaymentClause   String?            @map("late_payment_clause")
+
+  // Admin
+  invoiceNumber String?        @unique @map("invoice_number") // assigned on send
+  internalNotes String?        @map("internal_notes")         // never visible to client
+  publicId      String         @unique @map("public_id")
+  expiresAt     DateTime?      @map("expires_at")
+
+  // Relationships
+  templateId String?           @map("template_id")
+  template   Template?         @relation(fields: [templateId], references: [id])
+  clientId   String?           @map("client_id")
+  client     Client?           @relation(fields: [clientId], references: [id])
+  createdBy  String            @map("created_by")
+
+  events    ProposalEvent[]
+  revisions ProposalRevision[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("proposals")
+}
+
+model ProposalRevision {
+  id         String   @id @default(cuid())
+  proposalId String   @map("proposal_id")
+  proposal   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  version    Int      // sequential, scoped per proposal
+  snapshot   Json     // full proposal state at this point (title, content, pricingData, all settings)
+  createdBy  String   @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([proposalId, version])
+  @@map("proposal_revisions")
+}
+
+model Template {
+  id        String     @id @default(cuid())
+  name      String
+  content   Json
+  thumbnail String?
+  createdBy String     @map("created_by")
+  proposals Proposal[]
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  @@map("templates")
+}
+
+model ContentBlock {
+  id        String   @id @default(cuid())
+  name      String
+  category  String
+  content   Json
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("content_blocks")
+}
+
+model ProposalEvent {
+  id              String   @id @default(cuid())
+  proposalId      String   @map("proposal_id")
+  proposal        Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  eventType       String   @map("event_type") // opened, viewed_section, forwarded, signed, accepted
+  sectionId       String?  @map("section_id")
+  durationSeconds Int?     @map("duration_seconds")
+  ipAddress       String?  @map("ip_address")
+  userAgent       String?  @map("user_agent")
+  metadata        Json?    // arbitrary event data (e.g. accepted: signerName, clientIncluded)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("proposal_events")
+}
