@@ -1,13 +1,18 @@
 // Server-only role helpers. Do NOT import this file from client components.
-import { currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { roleFromMetadata, type AppRole } from "@/lib/roles";
 
-/** Get the current signed-in user's role. Must be called from a Server Component or Route Handler. */
+/** Get the current signed-in user's role from JWT session claims.
+ *  Clerk includes publicMetadata in the JWT under the 'metadata' key. */
 export async function getCurrentUserRole(): Promise<AppRole> {
-  const user = await currentUser();
-  if (!user) redirect("/sign-in");
-  return roleFromMetadata(user.publicMetadata as Record<string, unknown>);
+  const { userId, sessionClaims } = await auth();
+  if (!userId) redirect("/sign-in");
+  // Clerk embeds publicMetadata in JWT claims as { metadata: { role: ... } }
+  const metadata = (sessionClaims as Record<string, unknown>)?.metadata as
+    | Record<string, unknown>
+    | undefined;
+  return roleFromMetadata(metadata);
 }
 
 /** Redirect to /proposals if the user doesn't have the required role. */
