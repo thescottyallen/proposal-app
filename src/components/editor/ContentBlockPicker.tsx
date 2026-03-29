@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Editor } from "@tiptap/react";
+import type { Content } from "@tiptap/core";
 import { Blocks, X, Search, Plus } from "lucide-react";
 
 interface ContentBlock {
@@ -60,7 +61,7 @@ export function ContentBlockPicker({
 
     const blockContent = block.content as {
       type?: string;
-      content?: unknown[];
+      content?: Content[];
     };
 
     // Insert the block's content nodes at the current cursor position
