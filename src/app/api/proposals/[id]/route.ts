@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
+import { roleFromMetadata, canDeleteProposal } from "@/lib/roles";
 import { computePricingTotals } from "@/lib/utils";
 import {
   ProposalPricingData,
@@ -121,7 +122,7 @@ export async function PATCH(
   return NextResponse.json(proposal);
 }
 
-// DELETE /api/proposals/:id
+// DELETE /api/proposals/:id — admin only
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -130,7 +131,15 @@ export async function DELETE(
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const existing = await prisma.proposal.findFirst({ where: { id, createdBy: userId } });
+  // Only admins can delete proposals
+  const client = await clerkClient();
+  const user   = await client.users.getUser(userId);
+  const role   = roleFromMetadata(user.publicMetadata as Record<string, unknown>);
+  if (!canDeleteProposal(role)) {
+    return NextResponse.json({ error: "Only admins can delete proposals" }, { status: 403 });
+  }
+
+  const existing = await prisma.proposal.findFirst({ where: { id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   await prisma.proposal.delete({ where: { id } });

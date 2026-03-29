@@ -4,6 +4,7 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 const isPublicRoute = createRouteMatcher([
   "/p/(.*)",           // public proposal view
   "/api/events(.*)",   // analytics tracking endpoint
+  "/api/proposals/(.*)/accept", // public acceptance endpoint
   "/sign-in(.*)",
   "/sign-up(.*)",
 ]);

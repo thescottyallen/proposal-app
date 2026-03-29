@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { UserButton } from "@clerk/nextjs";
+import { UserButton, useUser } from "@clerk/nextjs";
 import {
   FileText,
   LayoutTemplate,
@@ -10,8 +10,10 @@ import {
   LayoutDashboard,
   Users,
   Settings,
+  UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { roleFromMetadata } from "@/lib/roles";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -21,12 +23,11 @@ const navItems = [
   { href: "/content-library", label: "Content Library", icon: Blocks },
 ];
 
-const bottomNavItems = [
-  { href: "/settings", label: "Settings", icon: Settings },
-];
-
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { user } = useUser();
+  const role = roleFromMetadata(user?.publicMetadata as Record<string, unknown> | undefined);
+  const isAdmin = role === "admin";
 
   return (
     <div className="flex h-screen">
@@ -60,24 +61,34 @@ export function Shell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="px-3 py-2 border-t border-gray-200 space-y-1">
-          {bottomNavItems.map((item) => {
-            const isActive = pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2 text-sm rounded-md transition-colors",
-                  isActive
-                    ? "bg-blue-50 text-blue-700 font-medium"
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                )}
-              >
-                <item.icon size={18} />
-                {item.label}
-              </Link>
-            );
-          })}
+          {isAdmin && (
+            <Link
+              href="/team"
+              className={cn(
+                "flex items-center gap-3 px-3 py-2 text-sm rounded-md transition-colors",
+                pathname.startsWith("/team")
+                  ? "bg-blue-50 text-blue-700 font-medium"
+                  : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+              )}
+            >
+              <UsersRound size={18} />
+              Team
+            </Link>
+          )}
+          {isAdmin && (
+            <Link
+              href="/settings"
+              className={cn(
+                "flex items-center gap-3 px-3 py-2 text-sm rounded-md transition-colors",
+                pathname.startsWith("/settings")
+                  ? "bg-blue-50 text-blue-700 font-medium"
+                  : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+              )}
+            >
+              <Settings size={18} />
+              Settings
+            </Link>
+          )}
         </div>
         <div className="px-5 py-4 border-t border-gray-200">
           <UserButton
