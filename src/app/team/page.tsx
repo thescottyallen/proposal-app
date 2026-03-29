@@ -1,4 +1,4 @@
-import { requireRole } from "@/lib/roles";
+import { requireRole } from "@/lib/roles.server";
 import { TeamClient } from "./TeamClient";
 
 export default async function TeamPage() {

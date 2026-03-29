@@ -1,5 +1,5 @@
-import { currentUser } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
+// Pure role helpers — safe to import from both server and client components.
+// Server-only helpers (getCurrentUserRole, requireRole) live in roles.server.ts
 
 export type AppRole = "admin" | "member" | "viewer";
 
@@ -15,8 +15,6 @@ export const ROLE_DESCRIPTIONS: Record<AppRole, string> = {
   viewer: "Read-only access to proposals. Cannot edit or see internal margins",
 };
 
-// ─── Server helpers ───────────────────────────────────────────────────────────
-
 /** Read the role from a Clerk user's publicMetadata. Defaults to "member". */
 export function roleFromMetadata(
   metadata: Record<string, unknown> | null | undefined
@@ -24,13 +22,6 @@ export function roleFromMetadata(
   const role = metadata?.role;
   if (role === "admin" || role === "member" || role === "viewer") return role;
   return "member";
-}
-
-/** Get the current signed-in user's role. Must be called from a Server Component or Route Handler. */
-export async function getCurrentUserRole(): Promise<AppRole> {
-  const user = await currentUser();
-  if (!user) redirect("/sign-in");
-  return roleFromMetadata(user.publicMetadata as Record<string, unknown>);
 }
 
 // ─── Permission checks ────────────────────────────────────────────────────────
@@ -53,11 +44,4 @@ export function canEditProposal(role: AppRole): boolean {
 
 export function canSeeMargin(role: AppRole): boolean {
   return role === "admin" || role === "member";
-}
-
-/** Redirect to /proposals if the user doesn't have the required role. */
-export async function requireRole(allowed: AppRole[]): Promise<AppRole> {
-  const role = await getCurrentUserRole();
-  if (!allowed.includes(role)) redirect("/proposals");
-  return role;
 }
