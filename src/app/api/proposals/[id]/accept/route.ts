@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   sendAcceptanceConfirmationToClient,
@@ -76,7 +75,7 @@ export async function POST(
     data: {
       status:      "ACCEPTED",
       pricingData: updatedPricingData != null
-        ? (updatedPricingData as unknown as Prisma.InputJsonValue)
+        ? (updatedPricingData as object)
         : undefined,
     },
   });
