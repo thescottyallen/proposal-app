@@ -72,7 +72,7 @@ export function ContentBlockPicker({
       });
     } else {
       // Fallback: insert the whole content object
-      editor.commands.insertContent(blockContent);
+      editor.commands.insertContent(blockContent as Content);
     }
 
     editor.commands.focus();
