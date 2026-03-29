@@ -2,12 +2,17 @@
 
 import { Shell } from "@/components/ui/Shell";
 import { ProposalEditor } from "@/components/editor/ProposalEditor";
-import { PricingItem } from "@/components/editor/PricingTable";
 import { useRouter, useParams } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import { ArrowLeft, Save } from "lucide-react";
 import Link from "next/link";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
+import {
+  ProposalPricingData,
+  ProposalPricingSettings,
+  defaultPricingData,
+  defaultPricingSettings,
+} from "@/lib/pricing-types";
 
 interface Template {
   id: string;
@@ -23,14 +28,16 @@ export default function EditTemplatePage() {
   const [template, setTemplate] = useState<Template | null>(null);
   const [name, setName] = useState("");
   const [content, setContent] = useState<Record<string, unknown>>({});
-  const [pricingItems, setPricingItems] = useState<PricingItem[]>([
-    { id: "1", description: "", quantity: 1, unitPrice: 0 },
-  ]);
+  const [pricingData, setPricingData] = useState<ProposalPricingData>(defaultPricingData());
+  const [pricingSettings, setPricingSettings] = useState<ProposalPricingSettings>(defaultPricingSettings());
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [hasChanges, setHasChanges] = useState(false);
 
   useUnsavedChanges(hasChanges);
+
+  // suppress unused var warning — router available for future nav after save
+  void router;
 
   useEffect(() => {
     fetch(`/api/templates/${id}`)
@@ -45,9 +52,14 @@ export default function EditTemplatePage() {
   }, [id]);
 
   const handleEditorUpdate = useCallback(
-    (newContent: Record<string, unknown>, newPricing: PricingItem[]) => {
+    (
+      newContent: Record<string, unknown>,
+      newPricingData: ProposalPricingData,
+      newPricingSettings: ProposalPricingSettings
+    ) => {
       setContent(newContent);
-      setPricingItems(newPricing);
+      setPricingData(newPricingData);
+      setPricingSettings(newPricingSettings);
       setHasChanges(true);
     },
     []
@@ -64,7 +76,7 @@ export default function EditTemplatePage() {
       await fetch(`/api/templates/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, content }),
+        body: JSON.stringify({ name, content, pricingData, pricingSettings }),
       });
       setHasChanges(false);
     } catch (error) {
@@ -129,7 +141,8 @@ export default function EditTemplatePage() {
         {/* Editor */}
         <ProposalEditor
           initialContent={content}
-          initialPricingItems={pricingItems}
+          initialPricingData={pricingData}
+          initialPricingSettings={pricingSettings}
           onUpdate={handleEditorUpdate}
         />
       </div>
