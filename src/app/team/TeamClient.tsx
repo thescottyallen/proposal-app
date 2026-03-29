@@ -25,6 +25,7 @@ const ROLE_ICONS: Record<AppRole, React.ReactNode> = {
 export function TeamClient() {
   const [members, setMembers]     = useState<TeamMember[]>([]);
   const [loading, setLoading]     = useState(true);
+  const [apiError, setApiError]   = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole]   = useState<AppRole>("member");
   const [inviting, setInviting]   = useState(false);
@@ -32,10 +33,18 @@ export function TeamClient() {
 
   const loadMembers = useCallback(async () => {
     setLoading(true);
+    setApiError(null);
     try {
       const res  = await fetch("/api/team");
-      const data = await res.json() as TeamMember[];
-      setMembers(data.sort((a, b) => a.createdAt - b.createdAt));
+      const data = await res.json() as TeamMember[] | { error: string };
+      if (!res.ok) {
+        setApiError((data as { error: string }).error ?? `Error ${res.status}`);
+        return;
+      }
+      const members = data as TeamMember[];
+      setMembers(members.sort((a, b) => a.createdAt - b.createdAt));
+    } catch (err) {
+      setApiError(String(err));
     } finally {
       setLoading(false);
     }
@@ -155,6 +164,14 @@ export function TeamClient() {
           </div>
           {loading ? (
             <div className="px-6 py-8 text-center text-sm text-gray-400">Loading...</div>
+          ) : apiError ? (
+            <div className="px-6 py-8 text-center text-sm text-red-500">
+              Failed to load team: {apiError}
+            </div>
+          ) : members.length === 0 ? (
+            <div className="px-6 py-8 text-center text-sm text-gray-400">
+              No team members found.
+            </div>
           ) : (
             <ul className="divide-y divide-gray-100">
               {members.map((m) => (
