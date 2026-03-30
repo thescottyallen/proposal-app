@@ -2,9 +2,11 @@
 
 import { Shell } from "@/components/ui/Shell";
 import { useState, useEffect, useCallback } from "react";
+import { useUser } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
 import { UserPlus, Trash2, Shield, Eye, Edit3 } from "lucide-react";
 import type { AppRole } from "@/lib/roles";
-import { ROLE_LABELS, ROLE_DESCRIPTIONS } from "@/lib/roles";
+import { ROLE_LABELS, ROLE_DESCRIPTIONS, roleFromMetadata } from "@/lib/roles";
 
 interface TeamMember {
   id:        string;
@@ -23,9 +25,18 @@ const ROLE_ICONS: Record<AppRole, React.ReactNode> = {
 };
 
 export function TeamClient() {
+  const { user, isLoaded } = useUser();
+  const router = useRouter();
   const [members, setMembers]     = useState<TeamMember[]>([]);
   const [loading, setLoading]     = useState(true);
   const [apiError, setApiError]   = useState<string | null>(null);
+
+  // Redirect non-admins once Clerk has loaded the user
+  useEffect(() => {
+    if (!isLoaded) return;
+    const role = roleFromMetadata(user?.publicMetadata as Record<string, unknown> | undefined);
+    if (role !== "admin") router.replace("/proposals");
+  }, [isLoaded, user, router]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole]   = useState<AppRole>("member");
   const [inviting, setInviting]   = useState(false);

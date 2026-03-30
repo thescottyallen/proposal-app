@@ -2,7 +2,10 @@
 
 import { Shell } from "@/components/ui/Shell";
 import { useState, useEffect } from "react";
+import { useUser } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
+import { roleFromMetadata } from "@/lib/roles";
 
 interface Settings {
   businessName:    string;
@@ -15,6 +18,14 @@ interface Settings {
 }
 
 export function SettingsClient() {
+  const { user, isLoaded } = useUser();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoaded) return;
+    const role = roleFromMetadata(user?.publicMetadata as Record<string, unknown> | undefined);
+    if (role !== "admin") router.replace("/proposals");
+  }, [isLoaded, user, router]);
   const [settings, setSettings]   = useState<Settings | null>(null);
   const [loading, setLoading]     = useState(true);
   const [saving, setSaving]       = useState(false);

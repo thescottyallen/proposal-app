@@ -1,9 +1,7 @@
-import { requireRole } from "@/lib/roles.server";
 import { SettingsClient } from "./SettingsClient";
 
 export const dynamic = "force-dynamic";
 
-export default async function SettingsPage() {
-  await requireRole(["admin"]);
+export default function SettingsPage() {
   return <SettingsClient />;
 }
