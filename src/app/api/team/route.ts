@@ -54,12 +54,17 @@ export async function POST(request: NextRequest) {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-  const invitation = await client.invitations.createInvitation({
-    emailAddress,
-    redirectUrl: `${appUrl}/sign-up`,
-    publicMetadata: { role },
-    ignoreExisting: true,
-  });
-
-  return NextResponse.json({ id: invitation.id, emailAddress: invitation.emailAddress });
+  try {
+    const invitation = await client.invitations.createInvitation({
+      emailAddress,
+      redirectUrl: `${appUrl}/sign-up`,
+      publicMetadata: { role },
+      ignoreExisting: true,
+    });
+    return NextResponse.json({ id: invitation.id, emailAddress: invitation.emailAddress });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Clerk createInvitation error:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
