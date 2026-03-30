@@ -59,7 +59,6 @@ export async function POST(request: NextRequest) {
 
     const invitation = await client.invitations.createInvitation({
       emailAddress,
-      publicMetadata: { role },
       ignoreExisting: true,
     });
 
