@@ -57,18 +57,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "emailAddress and role are required" }, { status: 400 });
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-
     const invitation = await client.invitations.createInvitation({
       emailAddress,
-      redirectUrl: `${appUrl}/sign-up`,
       publicMetadata: { role },
       ignoreExisting: true,
     });
 
     return NextResponse.json({ id: invitation.id, emailAddress: invitation.emailAddress });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    // Surface full Clerk error details (errors array, status, etc.)
+    let message = err instanceof Error ? err.message : String(err);
+    // Clerk SDK errors often carry an `errors` array with long_message
+    if (err && typeof err === "object" && "errors" in err) {
+      const clerkErrors = (err as { errors: Array<{ message: string; longMessage?: string; code?: string }> }).errors;
+      if (Array.isArray(clerkErrors) && clerkErrors.length > 0) {
+        message = clerkErrors.map((e) => e.longMessage ?? e.message).join("; ");
+      }
+    }
     console.error("POST /api/team error:", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
