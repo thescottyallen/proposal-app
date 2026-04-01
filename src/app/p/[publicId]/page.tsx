@@ -3,8 +3,6 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { notFound } from "next/navigation";
 import { PublicProposalView } from "./PublicProposalView";
 import { sendOpenNotification } from "@/lib/email";
-import { stripInternalFields } from "@/lib/pricing-types";
-import type { ProposalPricingData, ProposalPricingSettings } from "@/lib/pricing-types";
 
 interface Props {
   params: Promise<{ publicId: string }>;
@@ -27,7 +25,10 @@ export default async function PublicProposalPage({ params }: Props) {
     new Date(proposal.expiresAt) < new Date() &&
     ["SENT", "VIEWED"].includes(proposal.status)
   ) {
-    await prisma.proposal.update({ where: { id: proposal.id }, data: { status: "EXPIRED" } });
+    await prisma.proposal.update({
+      where: { id: proposal.id },
+      data:  { status: "EXPIRED" },
+    });
     proposal.status = "EXPIRED";
   }
 
@@ -47,7 +48,7 @@ export default async function PublicProposalPage({ params }: Props) {
         const clerk      = await clerkClient();
         const owner      = await clerk.users.getUser(proposal.createdBy);
         const ownerEmail = owner.emailAddresses.find(
-          e => e.id === owner.primaryEmailAddressId
+          (e) => e.id === owner.primaryEmailAddressId
         )?.emailAddress;
 
         if (ownerEmail) {
@@ -64,7 +65,10 @@ export default async function PublicProposalPage({ params }: Props) {
     }
 
     if (proposal.status === "SENT") {
-      await prisma.proposal.update({ where: { id: proposal.id }, data: { status: "VIEWED" } });
+      await prisma.proposal.update({
+        where: { id: proposal.id },
+        data:  { status: "VIEWED" },
+      });
       proposal.status = "VIEWED";
     }
   }
@@ -73,28 +77,6 @@ export default async function PublicProposalPage({ params }: Props) {
   const bizSettings = await prisma.businessSettings.findUnique({
     where: { userId: proposal.createdBy },
   });
-
-  // Strip internal fields (margin) before passing to client component
-  const rawPricingData = proposal.pricingData as ProposalPricingData | null;
-  const cleanPricingData = rawPricingData ? stripInternalFields(rawPricingData) : null;
-
-  const pricingSettings: ProposalPricingSettings = {
-    currency:           proposal.currency           as ProposalPricingSettings["currency"],
-    exchangeRate:       proposal.exchangeRate,
-    gstEnabled:         proposal.gstEnabled,
-    roundingMode:       proposal.roundingMode       as ProposalPricingSettings["roundingMode"],
-    discountType:       proposal.discountType       as ProposalPricingSettings["discountType"],
-    discountValue:      proposal.discountValue,
-    showDiscount:       proposal.showDiscount,
-    depositType:        proposal.depositType        as ProposalPricingSettings["depositType"],
-    depositValue:       proposal.depositValue,
-    billingCadence:     proposal.billingCadence     as ProposalPricingSettings["billingCadence"],
-    recurringStartMode: proposal.recurringStartMode as ProposalPricingSettings["recurringStartMode"],
-    recurringStartDate: proposal.recurringStartDate?.toISOString() ?? null,
-    fixedTermMonths:    proposal.fixedTermMonths,
-    paymentTerms:       proposal.paymentTerms       as ProposalPricingSettings["paymentTerms"],
-    latePaymentClause:  proposal.latePaymentClause,
-  };
 
   return (
     <PublicProposalView
@@ -109,8 +91,23 @@ export default async function PublicProposalPage({ params }: Props) {
         expiresAt:     proposal.expiresAt?.toISOString() ?? null,
         invoiceNumber: proposal.invoiceNumber,
         totalValue:    proposal.totalValue,
-        pricingData:   cleanPricingData,
-        pricingSettings,
+        // Legacy flat fields (used to migrate old proposals on the fly)
+        pricingData:        proposal.pricingData as Record<string, unknown> | null,
+        currency:           proposal.currency,
+        exchangeRate:       proposal.exchangeRate,
+        gstEnabled:         proposal.gstEnabled,
+        roundingMode:       proposal.roundingMode,
+        discountType:       proposal.discountType,
+        discountValue:      proposal.discountValue,
+        showDiscount:       proposal.showDiscount,
+        depositType:        proposal.depositType,
+        depositValue:       proposal.depositValue,
+        billingCadence:     proposal.billingCadence,
+        recurringStartMode: proposal.recurringStartMode,
+        recurringStartDate: proposal.recurringStartDate?.toISOString() ?? null,
+        fixedTermMonths:    proposal.fixedTermMonths,
+        paymentTerms:       proposal.paymentTerms,
+        latePaymentClause:  proposal.latePaymentClause,
       }}
       business={{
         businessName: bizSettings?.businessName ?? "",

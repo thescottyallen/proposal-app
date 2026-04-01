@@ -5,6 +5,11 @@ import {
   sendAcceptanceConfirmationToClient,
   sendAcceptanceNotificationToOwner,
 } from "@/lib/email";
+import {
+  isProposalDocument,
+  applyClientChoices,
+  ProposalDocument,
+} from "@/lib/proposal-document";
 import type { ProposalPricingData } from "@/lib/pricing-types";
 
 // POST /api/proposals/:id/accept — public endpoint, no auth required
@@ -21,7 +26,6 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Only SENT or VIEWED proposals can be accepted
   if (!["SENT", "VIEWED"].includes(proposal.status)) {
     return NextResponse.json(
       { error: "This proposal cannot be accepted in its current state." },
@@ -29,7 +33,6 @@ export async function POST(
     );
   }
 
-  // Enforce expiry
   if (proposal.expiresAt && new Date(proposal.expiresAt) < new Date()) {
     await prisma.proposal.update({ where: { id }, data: { status: "EXPIRED" } });
     return NextResponse.json(
@@ -40,47 +43,58 @@ export async function POST(
 
   const body = await request.json();
   const { signerName, clientIncluded } = body as {
-    signerName:      string;
-    clientIncluded:  Record<string, boolean>;
+    signerName:     string;
+    clientIncluded: Record<string, boolean>;
   };
 
   if (!signerName?.trim()) {
     return NextResponse.json({ error: "Signer name is required." }, { status: 400 });
   }
 
-  // Get client IP
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-    ?? request.headers.get("x-real-ip")
-    ?? "unknown";
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    request.headers.get("x-real-ip") ??
+    "unknown";
 
   const acceptedAt = new Date();
 
-  // Merge clientIncluded choices into pricingData
-  const existingPricing = proposal.pricingData as ProposalPricingData | null;
-  const updatedPricingData: ProposalPricingData | null = existingPricing
-    ? {
+  // Determine how to update clientIncluded based on content format
+  const rawContent = proposal.content as Record<string, unknown>;
+  let contentUpdate: Record<string, unknown> | undefined;
+  let pricingDataUpdate: object | undefined;
+
+  if (isProposalDocument(rawContent)) {
+    // New format: update clientIncluded within the document's pricing blocks
+    const updatedDoc = applyClientChoices(
+      rawContent as unknown as ProposalDocument,
+      clientIncluded
+    );
+    contentUpdate = updatedDoc as unknown as Record<string, unknown>;
+  } else {
+    // Legacy format: update the separate pricingData column
+    const existingPricing = proposal.pricingData as ProposalPricingData | null;
+    if (existingPricing) {
+      pricingDataUpdate = {
         ...existingPricing,
-        items: existingPricing.items.map(item => ({
+        items: existingPricing.items.map((item) => ({
           ...item,
           clientIncluded: item.isOptional
             ? (clientIncluded[item.id] ?? item.clientIncluded)
             : true,
         })),
-      }
-    : null;
+      };
+    }
+  }
 
-  // Update proposal to ACCEPTED and persist client's item choices
   await prisma.proposal.update({
     where: { id },
     data: {
-      status:      "ACCEPTED",
-      pricingData: updatedPricingData != null
-        ? (updatedPricingData as object)
-        : undefined,
+      status: "ACCEPTED",
+      ...(contentUpdate    && { content:     contentUpdate as object }),
+      ...(pricingDataUpdate && { pricingData: pricingDataUpdate }),
     },
   });
 
-  // Record acceptance event (full audit trail)
   await prisma.proposalEvent.create({
     data: {
       proposalId: id,
@@ -94,24 +108,21 @@ export async function POST(
     },
   });
 
-  // Get owner email from Clerk to send notification
   try {
-    const client = await clerkClient();
-    const owner  = await client.users.getUser(proposal.createdBy);
+    const client    = await clerkClient();
+    const owner     = await client.users.getUser(proposal.createdBy);
     const ownerEmail = owner.emailAddresses.find(
-      e => e.id === owner.primaryEmailAddressId
+      (e) => e.id === owner.primaryEmailAddressId
     )?.emailAddress;
 
     const appUrl    = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const publicUrl = `${appUrl}/p/${proposal.publicId}`;
 
-    // Get business name for the client confirmation email
     const bizSettings = await prisma.businessSettings.findUnique({
       where: { userId: proposal.createdBy },
     });
     const businessName = bizSettings?.businessName || "The Product Bus";
 
-    // Send to client
     await sendAcceptanceConfirmationToClient({
       to:            proposal.clientEmail,
       clientName:    proposal.clientName,
@@ -121,7 +132,6 @@ export async function POST(
       publicUrl,
     });
 
-    // Send to owner
     if (ownerEmail) {
       await sendAcceptanceNotificationToOwner({
         ownerEmail,
@@ -135,7 +145,6 @@ export async function POST(
       });
     }
   } catch (err) {
-    // Don't fail the acceptance if notifications error
     console.error("Failed to send acceptance notifications:", err);
   }
 

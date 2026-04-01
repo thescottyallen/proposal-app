@@ -2,9 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { generatePublicId, computePricingTotals } from "@/lib/utils";
-import { defaultPricingData, defaultPricingSettings, ProposalPricingData, ProposalPricingSettings } from "@/lib/pricing-types";
+import {
+  isProposalDocument,
+  getAllPricingBlocks,
+  defaultDocument,
+  ProposalDocument,
+} from "@/lib/proposal-document";
+import {
+  defaultPricingSettings,
+} from "@/lib/pricing-types";
 
-// GET /api/proposals — list all proposals for current user
+// ─── GET /api/proposals ───────────────────────────────────────────────────────
+
 export async function GET() {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -13,17 +22,17 @@ export async function GET() {
     where:   { createdBy: userId },
     orderBy: { createdAt: "desc" },
     select: {
-      id:           true,
-      title:        true,
-      clientName:   true,
-      clientEmail:  true,
-      status:       true,
-      totalValue:   true,
-      currency:     true,
+      id:            true,
+      title:         true,
+      clientName:    true,
+      clientEmail:   true,
+      status:        true,
+      totalValue:    true,
+      currency:      true,
       invoiceNumber: true,
-      publicId:     true,
-      expiresAt:    true,
-      createdAt:    true,
+      publicId:      true,
+      expiresAt:     true,
+      createdAt:     true,
       _count: { select: { events: true } },
     },
   });
@@ -31,7 +40,8 @@ export async function GET() {
   return NextResponse.json(proposals);
 }
 
-// POST /api/proposals — create a new proposal
+// ─── POST /api/proposals ──────────────────────────────────────────────────────
+
 export async function POST(request: NextRequest) {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -40,22 +50,51 @@ export async function POST(request: NextRequest) {
   const {
     title, clientName, clientEmail, clientAbn,
     content, templateId, clientId,
-    pricingData, pricingSettings,
     expiresAt, internalNotes,
+    // Legacy pricing fields (still accepted for backward compat)
+    pricingData: legacyPricingData,
+    pricingSettings: legacyPricingSettings,
   } = body;
 
   // Load business settings to apply defaults
   const bizSettings = await prisma.businessSettings.findUnique({ where: { userId } });
-
-  const effectivePricingData:     ProposalPricingData     = pricingData     ?? defaultPricingData();
-  const effectivePricingSettings: ProposalPricingSettings = pricingSettings ?? {
+  const defaultSettings = {
     ...defaultPricingSettings(),
     currency:     bizSettings?.defaultCurrency ?? "AUD",
     roundingMode: bizSettings?.roundingMode    ?? "CENTS",
   };
 
-  const totals     = computePricingTotals(effectivePricingData, effectivePricingSettings);
-  const totalValue = totals.grandTotal || null;
+  // Resolve the document content
+  let resolvedContent: Record<string, unknown>;
+  let totalValue: number | null = null;
+  let effectiveCurrency = defaultSettings.currency as string;
+
+  if (content && isProposalDocument(content)) {
+    // New format — compute total from pricing blocks
+    const doc = content as ProposalDocument;
+    resolvedContent = doc as unknown as Record<string, unknown>;
+    const pricingBlocks = getAllPricingBlocks(doc);
+    let sum = 0;
+    for (const block of pricingBlocks) {
+      const t = computePricingTotals(block.pricingData, block.pricingSettings);
+      sum += t.grandTotal ?? 0;
+    }
+    totalValue = sum || null;
+    if (pricingBlocks.length > 0) {
+      effectiveCurrency = pricingBlocks[0].pricingSettings.currency;
+    }
+  } else if (content && Object.keys(content).length > 0) {
+    // Legacy TipTap doc passed directly
+    resolvedContent = content as Record<string, unknown>;
+    if (legacyPricingData && legacyPricingSettings) {
+      const totals = computePricingTotals(legacyPricingData, legacyPricingSettings);
+      totalValue = totals.grandTotal || null;
+      effectiveCurrency = legacyPricingSettings.currency ?? effectiveCurrency;
+    }
+  } else {
+    // Brand new blank proposal
+    resolvedContent = defaultDocument(defaultSettings) as unknown as Record<string, unknown>;
+  }
 
   const proposal = await prisma.proposal.create({
     data: {
@@ -63,31 +102,15 @@ export async function POST(request: NextRequest) {
       clientName:   clientName  || "",
       clientEmail:  clientEmail || "",
       clientAbn:    clientAbn   || null,
-      content:      content     || {},
+      content:      resolvedContent as object,
       templateId:   templateId  || null,
       clientId:     clientId    || null,
       createdBy:    userId,
       publicId:     generatePublicId(),
       internalNotes: internalNotes || null,
       expiresAt:    expiresAt ? new Date(expiresAt) : null,
-      pricingData:  effectivePricingData  as object,
       totalValue,
-      // Pricing settings fields
-      currency:           effectivePricingSettings.currency,
-      exchangeRate:       effectivePricingSettings.exchangeRate,
-      gstEnabled:         effectivePricingSettings.gstEnabled,
-      roundingMode:       effectivePricingSettings.roundingMode,
-      discountType:       effectivePricingSettings.discountType,
-      discountValue:      effectivePricingSettings.discountValue,
-      showDiscount:       effectivePricingSettings.showDiscount,
-      depositType:        effectivePricingSettings.depositType,
-      depositValue:       effectivePricingSettings.depositValue,
-      billingCadence:     effectivePricingSettings.billingCadence,
-      recurringStartMode: effectivePricingSettings.recurringStartMode,
-      recurringStartDate: effectivePricingSettings.recurringStartDate ? new Date(effectivePricingSettings.recurringStartDate) : null,
-      fixedTermMonths:    effectivePricingSettings.fixedTermMonths,
-      paymentTerms:       effectivePricingSettings.paymentTerms,
-      latePaymentClause:  effectivePricingSettings.latePaymentClause,
+      currency:     effectiveCurrency as "AUD" | "USD",
     },
   });
 

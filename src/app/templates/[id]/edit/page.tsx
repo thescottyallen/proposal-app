@@ -8,11 +8,11 @@ import { ArrowLeft, Save } from "lucide-react";
 import Link from "next/link";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import {
-  ProposalPricingData,
-  ProposalPricingSettings,
-  defaultPricingData,
-  defaultPricingSettings,
-} from "@/lib/pricing-types";
+  ProposalDocument,
+  migrateToDocument,
+  isProposalDocument,
+} from "@/lib/proposal-document";
+import { defaultPricingSettings } from "@/lib/pricing-types";
 
 interface Template {
   id: string;
@@ -25,19 +25,17 @@ export default function EditTemplatePage() {
   const params = useParams();
   const id = params.id as string;
 
-  const [template, setTemplate] = useState<Template | null>(null);
-  const [name, setName] = useState("");
-  const [content, setContent] = useState<Record<string, unknown>>({});
-  const [pricingData, setPricingData] = useState<ProposalPricingData>(defaultPricingData());
-  const [pricingSettings, setPricingSettings] = useState<ProposalPricingSettings>(defaultPricingSettings());
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // suppress unused var warning
+  void router;
+
+  const [template, setTemplate]   = useState<Template | null>(null);
+  const [name, setName]           = useState("");
+  const [document, setDocument]   = useState<ProposalDocument | null>(null);
+  const [saving, setSaving]       = useState(false);
+  const [loading, setLoading]     = useState(true);
   const [hasChanges, setHasChanges] = useState(false);
 
   useUnsavedChanges(hasChanges);
-
-  // suppress unused var warning — router available for future nav after save
-  void router;
 
   useEffect(() => {
     fetch(`/api/templates/${id}`)
@@ -45,38 +43,30 @@ export default function EditTemplatePage() {
       .then((data) => {
         setTemplate(data);
         setName(data.name);
-        setContent(data.content);
+        const raw = data.content as Record<string, unknown>;
+        setDocument(
+          isProposalDocument(raw)
+            ? raw
+            : migrateToDocument(raw, null, defaultPricingSettings())
+        );
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, [id]);
 
-  const handleEditorUpdate = useCallback(
-    (
-      newContent: Record<string, unknown>,
-      newPricingData: ProposalPricingData,
-      newPricingSettings: ProposalPricingSettings
-    ) => {
-      setContent(newContent);
-      setPricingData(newPricingData);
-      setPricingSettings(newPricingSettings);
-      setHasChanges(true);
-    },
-    []
-  );
-
-  const handleNameChange = (value: string) => {
-    setName(value);
+  const handleEditorUpdate = useCallback((doc: ProposalDocument) => {
+    setDocument(doc);
     setHasChanges(true);
-  };
+  }, []);
 
   const handleSave = async () => {
+    if (!document) return;
     setSaving(true);
     try {
       await fetch(`/api/templates/${id}`, {
-        method: "PATCH",
+        method:  "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, content, pricingData, pricingSettings }),
+        body:    JSON.stringify({ name, content: document }),
       });
       setHasChanges(false);
     } catch (error) {
@@ -86,7 +76,7 @@ export default function EditTemplatePage() {
     }
   };
 
-  if (loading) {
+  if (loading || !document) {
     return (
       <Shell>
         <div className="flex items-center justify-center h-full">
@@ -108,43 +98,47 @@ export default function EditTemplatePage() {
 
   return (
     <Shell>
-      <div className="px-8 py-8 max-w-4xl">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/templates"
-              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <ArrowLeft size={20} />
-            </Link>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => handleNameChange(e.target.value)}
-              className="text-2xl font-bold text-gray-900 border-0 bg-transparent focus:outline-none focus:ring-0 p-0"
-            />
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
-              Template
-            </span>
+      <div className="flex min-h-full">
+        <div className="flex-1 flex flex-col min-h-full overflow-hidden">
+          {/* Header */}
+          <div className="px-8 py-5 border-b border-gray-200 bg-white shrink-0">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Link
+                  href="/templates"
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <ArrowLeft size={20} />
+                </Link>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => { setName(e.target.value); setHasChanges(true); }}
+                  className="text-2xl font-bold text-gray-900 border-0 bg-transparent focus:outline-none focus:ring-0 p-0"
+                />
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                  Template
+                </span>
+              </div>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                <Save size={14} />
+                {saving ? "Saving..." : "Save"}
+              </button>
+            </div>
           </div>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-          >
-            <Save size={14} />
-            {saving ? "Saving..." : "Save"}
-          </button>
-        </div>
 
-        {/* Editor */}
-        <ProposalEditor
-          initialContent={content}
-          initialPricingData={pricingData}
-          initialPricingSettings={pricingSettings}
-          onUpdate={handleEditorUpdate}
-        />
+          {/* Editor */}
+          <div className="flex flex-1 overflow-hidden bg-gray-50">
+            <ProposalEditor
+              initialDocument={document}
+              onUpdate={handleEditorUpdate}
+            />
+          </div>
+        </div>
       </div>
     </Shell>
   );

@@ -2,17 +2,17 @@
 
 import { Shell } from "@/components/ui/Shell";
 import { ProposalEditor } from "@/components/editor/ProposalEditor";
-import { blankProposalContent } from "@/lib/default-content";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { ArrowLeft, Save } from "lucide-react";
 import Link from "next/link";
 import {
-  ProposalPricingData,
-  ProposalPricingSettings,
-  defaultPricingData,
-  defaultPricingSettings,
-} from "@/lib/pricing-types";
+  defaultDocument,
+  migrateToDocument,
+  isProposalDocument,
+  ProposalDocument,
+} from "@/lib/proposal-document";
+import { defaultPricingSettings } from "@/lib/pricing-types";
 
 function NewProposalForm() {
   const router       = useRouter();
@@ -23,34 +23,41 @@ function NewProposalForm() {
   const [title, setTitle]           = useState("Untitled Proposal");
   const [clientName, setClientName] = useState("");
   const [clientEmail, setClientEmail] = useState("");
-  const [content, setContent]       = useState<Record<string, unknown>>(blankProposalContent);
-  const [pricingData, setPricingData]         = useState<ProposalPricingData>(defaultPricingData());
-  const [pricingSettings, setPricingSettings] = useState<ProposalPricingSettings>(defaultPricingSettings());
-  const [gstRegistered, setGstRegistered]     = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [document, setDocument]     = useState<ProposalDocument | null>(null);
+  const [saving, setSaving]         = useState(false);
 
-  // Load business settings (for GST toggle and currency defaults)
+  // Load business settings, then initialise the document with correct currency/GST
   useEffect(() => {
     fetch("/api/settings")
-      .then(r => r.json())
-      .then(s => {
-        setGstRegistered(s.gstRegistered ?? false);
-        setPricingSettings(prev => ({
-          ...prev,
-          currency:     s.defaultCurrency ?? "AUD",
-          roundingMode: s.roundingMode    ?? "CENTS",
-        }));
+      .then((r) => r.json())
+      .then((s) => {
+        setDocument((prev) => {
+          if (prev) return prev; // already set by template effect
+          return defaultDocument({
+            currency:     s.defaultCurrency ?? "AUD",
+            roundingMode: s.roundingMode    ?? "CENTS",
+          });
+        });
       })
-      .catch(console.error);
+      .catch(() => {
+        setDocument((prev) => prev ?? defaultDocument());
+      });
   }, []);
 
   // Load template content if templateId is provided
   useEffect(() => {
     if (!templateId) return;
     fetch(`/api/templates/${templateId}`)
-      .then(r => r.json())
-      .then(template => {
-        if (template.content) setContent(template.content);
+      .then((r) => r.json())
+      .then((template) => {
+        if (template.content) {
+          const content = template.content as Record<string, unknown>;
+          setDocument(
+            isProposalDocument(content)
+              ? content
+              : migrateToDocument(content, null, defaultPricingSettings())
+          );
+        }
         setTitle(`New Proposal from ${template.name}`);
       })
       .catch(console.error);
@@ -60,8 +67,8 @@ function NewProposalForm() {
   useEffect(() => {
     if (!clientId) return;
     fetch(`/api/clients/${clientId}`)
-      .then(r => r.json())
-      .then(client => {
+      .then((r) => r.json())
+      .then((client) => {
         setClientName(client.name);
         setClientEmail(client.email);
         if (!templateId) setTitle(`Proposal for ${client.name}`);
@@ -69,17 +76,12 @@ function NewProposalForm() {
       .catch(console.error);
   }, [clientId, templateId]);
 
-  const handleEditorUpdate = useCallback((
-    newContent:         Record<string, unknown>,
-    newPricingData:     ProposalPricingData,
-    newPricingSettings: ProposalPricingSettings,
-  ) => {
-    setContent(newContent);
-    setPricingData(newPricingData);
-    setPricingSettings(newPricingSettings);
+  const handleEditorUpdate = useCallback((doc: ProposalDocument) => {
+    setDocument(doc);
   }, []);
 
   const handleSave = async () => {
+    if (!document) return;
     setSaving(true);
     try {
       const res = await fetch("/api/proposals", {
@@ -89,9 +91,7 @@ function NewProposalForm() {
           title,
           clientName,
           clientEmail,
-          content,
-          pricingData,
-          pricingSettings,
+          content: document,
           templateId: templateId || undefined,
           clientId:   clientId   || undefined,
         }),
@@ -105,66 +105,86 @@ function NewProposalForm() {
     }
   };
 
+  if (!document) {
+    return (
+      <Shell>
+        <div className="flex items-center justify-center h-full">
+          <p className="text-gray-500">Loading...</p>
+        </div>
+      </Shell>
+    );
+  }
+
   return (
     <Shell>
-      <div className="px-8 py-8 max-w-4xl">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <Link href="/" className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-              <ArrowLeft size={20} />
-            </Link>
-            <input
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              className="text-2xl font-bold text-gray-900 border-0 bg-transparent focus:outline-none focus:ring-0 p-0"
-              placeholder="Proposal Title"
+      <div className="flex min-h-full">
+        {/* Editor handles its own page sidebar */}
+        <div className="flex-1 flex flex-col min-h-full">
+          {/* Header bar */}
+          <div className="px-8 py-6 border-b border-gray-200 bg-white">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Link
+                  href="/"
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <ArrowLeft size={20} />
+                </Link>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="text-2xl font-bold text-gray-900 border-0 bg-transparent focus:outline-none focus:ring-0 p-0"
+                  placeholder="Proposal Title"
+                />
+              </div>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                <Save size={16} />
+                {saving ? "Saving..." : "Save Draft"}
+              </button>
+            </div>
+
+            {/* Client details */}
+            <div className="mt-4 grid grid-cols-2 gap-4 max-w-xl">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Client Name
+                </label>
+                <input
+                  type="text"
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Acme Corp"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Client Email
+                </label>
+                <input
+                  type="email"
+                  value={clientEmail}
+                  onChange={(e) => setClientEmail(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="contact@acme.com"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Editor */}
+          <div className="flex flex-1 overflow-hidden">
+            <ProposalEditor
+              initialDocument={document}
+              onUpdate={handleEditorUpdate}
             />
           </div>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-          >
-            <Save size={16} />
-            {saving ? "Saving..." : "Save Draft"}
-          </button>
         </div>
-
-        {/* Client details */}
-        <div className="bg-white rounded-lg border border-gray-200 p-5 mb-6">
-          <h3 className="text-sm font-medium text-gray-700 mb-3">Client Details</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Client Name</label>
-              <input
-                type="text"
-                value={clientName}
-                onChange={e => setClientName(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Acme Corp"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Client Email</label>
-              <input
-                type="email"
-                value={clientEmail}
-                onChange={e => setClientEmail(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="contact@acme.com"
-              />
-            </div>
-          </div>
-        </div>
-
-        <ProposalEditor
-          initialContent={content}
-          initialPricingData={pricingData}
-          initialPricingSettings={pricingSettings}
-          onUpdate={handleEditorUpdate}
-          gstRegistered={gstRegistered}
-        />
       </div>
     </Shell>
   );

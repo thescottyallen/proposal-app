@@ -4,12 +4,33 @@ import { prisma } from "@/lib/prisma";
 import { roleFromMetadata, canDeleteProposal } from "@/lib/roles";
 import { computePricingTotals } from "@/lib/utils";
 import {
-  ProposalPricingData,
-  ProposalPricingSettings,
-  stripInternalFields,
-} from "@/lib/pricing-types";
+  isProposalDocument,
+  getAllPricingBlocks,
+  stripDocumentInternalFields,
+  ProposalDocument,
+} from "@/lib/proposal-document";
+import type { ProposalPricingSettings } from "@/lib/pricing-types";
 
-// GET /api/proposals/:id — get a single proposal (editor view, includes all fields)
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Compute grand total by summing all pricing blocks in a ProposalDocument */
+function computeDocumentTotal(doc: ProposalDocument): number {
+  let total = 0;
+  for (const block of getAllPricingBlocks(doc)) {
+    const t = computePricingTotals(block.pricingData, block.pricingSettings);
+    total += t.grandTotal ?? 0;
+  }
+  return total;
+}
+
+/** Extract the first pricing block's settings (for the flat currency column) */
+function firstPricingSettings(doc: ProposalDocument): ProposalPricingSettings | null {
+  const blocks = getAllPricingBlocks(doc);
+  return blocks.length > 0 ? blocks[0].pricingSettings : null;
+}
+
+// ─── GET /api/proposals/:id ───────────────────────────────────────────────────
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -32,7 +53,8 @@ export async function GET(
   return NextResponse.json(proposal);
 }
 
-// PATCH /api/proposals/:id — update a proposal (also snapshots revision if status >= SENT)
+// ─── PATCH /api/proposals/:id ─────────────────────────────────────────────────
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -48,20 +70,29 @@ export async function PATCH(
   const {
     title, clientName, clientEmail, clientAbn,
     content, status, expiresAt, internalNotes,
-    pricingData, pricingSettings,
+    // Legacy fields (still accepted for backward compat)
+    pricingData: legacyPricingData,
+    pricingSettings: legacyPricingSettings,
   } = body;
 
-  // Compute total from new pricing data if provided
+  // Compute totalValue and first pricing settings from the content
   let totalValue: number | undefined;
-  if (pricingData && pricingSettings) {
-    const totals = computePricingTotals(pricingData as ProposalPricingData, pricingSettings as ProposalPricingSettings);
-    totalValue = totals.grandTotal || 0;
+  let ps: ProposalPricingSettings | null = null;
+
+  if (content && isProposalDocument(content)) {
+    const doc = content as ProposalDocument;
+    totalValue = computeDocumentTotal(doc);
+    ps = firstPricingSettings(doc);
+  } else if (legacyPricingData && legacyPricingSettings) {
+    // Legacy path
+    const totals = computePricingTotals(legacyPricingData, legacyPricingSettings);
+    totalValue = totals.grandTotal ?? 0;
+    ps = legacyPricingSettings as ProposalPricingSettings;
   }
 
-  // Snapshot current state as a revision if proposal is already SENT/VIEWED/ACCEPTED
-  // (captures scope renegotiation — not every save)
+  // Snapshot current state as a revision if the proposal is already SENT/VIEWED/ACCEPTED
   const shouldSnapshot = ["SENT", "VIEWED", "ACCEPTED"].includes(existing.status);
-  if (shouldSnapshot && (pricingData || content !== undefined)) {
+  if (shouldSnapshot && (content !== undefined || legacyPricingData)) {
     const lastRevision = await prisma.proposalRevision.findFirst({
       where:   { proposalId: id },
       orderBy: { version: "desc" },
@@ -72,49 +103,37 @@ export async function PATCH(
         version:    (lastRevision?.version ?? 0) + 1,
         createdBy:  userId,
         snapshot: {
-          title:        existing.title,
-          content:      existing.content,
-          pricingData:  existing.pricingData,
-          clientName:   existing.clientName,
-          clientEmail:  existing.clientEmail,
-          totalValue:   existing.totalValue,
-          updatedAt:    existing.updatedAt,
+          title:      existing.title,
+          content:    existing.content,
+          clientName: existing.clientName,
+          clientEmail: existing.clientEmail,
+          totalValue: existing.totalValue,
+          updatedAt:  existing.updatedAt,
         },
       },
     });
   }
 
-  const ps = pricingSettings as ProposalPricingSettings | undefined;
-
   const proposal = await prisma.proposal.update({
     where: { id },
     data: {
-      ...(title        !== undefined && { title }),
-      ...(clientName   !== undefined && { clientName }),
-      ...(clientEmail  !== undefined && { clientEmail }),
-      ...(clientAbn    !== undefined && { clientAbn }),
-      ...(content      !== undefined && { content }),
-      ...(status       !== undefined && { status }),
-      ...(totalValue   !== undefined && { totalValue }),
-      ...(expiresAt    !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null }),
+      ...(title         !== undefined && { title }),
+      ...(clientName    !== undefined && { clientName }),
+      ...(clientEmail   !== undefined && { clientEmail }),
+      ...(clientAbn     !== undefined && { clientAbn }),
+      ...(content       !== undefined && { content }),
+      ...(status        !== undefined && { status }),
+      ...(totalValue    !== undefined && { totalValue }),
+      ...(expiresAt     !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null }),
       ...(internalNotes !== undefined && { internalNotes }),
-      ...(pricingData  !== undefined && { pricingData: pricingData as object }),
+      // Update flat currency column from first pricing block (for reporting)
       ...(ps && {
-        currency:           ps.currency,
-        exchangeRate:       ps.exchangeRate,
-        gstEnabled:         ps.gstEnabled,
-        roundingMode:       ps.roundingMode,
-        discountType:       ps.discountType,
-        discountValue:      ps.discountValue,
-        showDiscount:       ps.showDiscount,
-        depositType:        ps.depositType,
-        depositValue:       ps.depositValue,
-        billingCadence:     ps.billingCadence,
-        recurringStartMode: ps.recurringStartMode,
-        recurringStartDate: ps.recurringStartDate ? new Date(ps.recurringStartDate) : null,
-        fixedTermMonths:    ps.fixedTermMonths,
-        paymentTerms:       ps.paymentTerms,
-        latePaymentClause:  ps.latePaymentClause,
+        currency:    ps.currency,
+        exchangeRate: ps.exchangeRate,
+        gstEnabled:  ps.gstEnabled,
+        roundingMode: ps.roundingMode,
+        paymentTerms: ps.paymentTerms,
+        billingCadence: ps.billingCadence,
       }),
     },
   });
@@ -122,7 +141,8 @@ export async function PATCH(
   return NextResponse.json(proposal);
 }
 
-// DELETE /api/proposals/:id — admin only
+// ─── DELETE /api/proposals/:id ────────────────────────────────────────────────
+
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -131,7 +151,6 @@ export async function DELETE(
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // Only admins can delete proposals
   const client = await clerkClient();
   const user   = await client.users.getUser(userId);
   const role   = roleFromMetadata(user.publicMetadata as Record<string, unknown>);
@@ -146,13 +165,29 @@ export async function DELETE(
   return NextResponse.json({ success: true });
 }
 
-// Helper used by the public route — strips margin from pricingData before sending
-export function sanitiseForClient(proposal: { pricingData: unknown; [key: string]: unknown }) {
-  const data = proposal.pricingData as ProposalPricingData | null;
+// ─── sanitiseForClient ────────────────────────────────────────────────────────
+// Used by the public route (/p/[publicId]) — strips margin from pricing blocks
+// and never exposes internalNotes.
+
+export function sanitiseForClient(proposal: {
+  content: unknown;
+  pricingData: unknown;
+  [key: string]: unknown;
+}) {
+  const content = proposal.content as Record<string, unknown> | null;
+
+  // New format: strip margin from pricing blocks inside the document
+  if (content && isProposalDocument(content)) {
+    return {
+      ...proposal,
+      content: stripDocumentInternalFields(content as ProposalDocument),
+      internalNotes: undefined,
+    };
+  }
+
+  // Legacy format: strip from pricingData column (keep for backward compat)
   return {
     ...proposal,
-    pricingData: data ? stripInternalFields(data) : null,
-    // Never expose these to the client
     internalNotes: undefined,
   };
 }
