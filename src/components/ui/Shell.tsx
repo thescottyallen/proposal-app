@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { UserButton, useUser } from "@clerk/nextjs";
 import {
@@ -33,9 +34,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen">
       {/* Sidebar */}
       <aside className="w-60 bg-white border-r border-gray-200 flex flex-col">
-        <div className="px-5 py-5 border-b border-gray-200">
-          <Link href="/" className="text-lg font-bold text-gray-900">
-            Proposals
+        <div className="px-4 py-3 border-b border-gray-200">
+          <Link href="/">
+            <Image
+              src="/logo.png"
+              alt="The Product Bus"
+              width={160}
+              height={48}
+              className="object-contain"
+              priority
+            />
           </Link>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1">
