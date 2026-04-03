@@ -67,19 +67,33 @@ model BusinessSettings {
 
 model Client {
   id        String     @id @default(cuid())
-  name      String
-  email     String
-  company   String?
-  phone     String?
+  name      String                          // Company / trading name
+  abn       String?
   address   String?
   notes     String?
+  createdBy String     @map("created_by")
+  contacts  Contact[]
+  proposals Proposal[]
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  @@map("clients")
+}
+
+model Contact {
+  id        String     @id @default(cuid())
+  clientId  String     @map("client_id")
+  client    Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name      String
+  email     String
+  phone     String?
+  isMain    Boolean    @default(false) @map("is_main")
   createdBy String     @map("created_by")
   proposals Proposal[]
   createdAt DateTime   @default(now()) @map("created_at")
   updatedAt DateTime   @updatedAt @map("updated_at")
 
-  @@unique([email, createdBy])
-  @@map("clients")
+  @@map("contacts")
 }
 
 model Proposal {
@@ -130,6 +144,8 @@ model Proposal {
   template   Template?         @relation(fields: [templateId], references: [id])
   clientId   String?           @map("client_id")
   client     Client?           @relation(fields: [clientId], references: [id])
+  contactId  String?           @map("contact_id")
+  contact    Contact?          @relation(fields: [contactId], references: [id])
   createdBy  String            @map("created_by")
 
   events    ProposalEvent[]

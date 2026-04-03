@@ -2,17 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 
-// GET /api/clients - list all clients for current user
+// GET /api/clients — list all clients for the current user, with contacts
 export async function GET() {
   const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const clients = await prisma.client.findMany({
-    where: { createdBy: userId },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const clients = await (prisma as any).client.findMany({
+    where:   { createdBy: userId },
     orderBy: { createdAt: "desc" },
     include: {
+      contacts: {
+        orderBy: [{ isMain: "desc" }, { createdAt: "asc" }],
+      },
       _count: { select: { proposals: true } },
     },
   });
@@ -20,44 +22,48 @@ export async function GET() {
   return NextResponse.json(clients);
 }
 
-// POST /api/clients - create a new client
+// POST /api/clients — create a new client (company) and first contact
 export async function POST(request: NextRequest) {
   const { userId } = await auth();
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json();
-  const { name, email, company, phone, address, notes } = body;
+  const { name, abn, address, notes, contact } = body;
 
-  if (!name || !email) {
-    return NextResponse.json(
-      { error: "Name and email are required" },
-      { status: 400 }
-    );
+  if (!name?.trim()) {
+    return NextResponse.json({ error: "Company name is required" }, { status: 400 });
   }
 
-  // Check for existing client with same email
-  const existing = await prisma.client.findFirst({
-    where: { email, createdBy: userId },
-  });
-  if (existing) {
-    return NextResponse.json(
-      { error: "A client with this email already exists" },
-      { status: 409 }
-    );
+  if (contact) {
+    if (!contact.name?.trim() || !contact.email?.trim() || !contact.email.includes("@")) {
+      return NextResponse.json(
+        { error: "Contact name and a valid email are required" },
+        { status: 400 }
+      );
+    }
   }
 
-  const client = await prisma.client.create({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const client = await (prisma as any).client.create({
     data: {
-      name,
-      email,
-      company: company || null,
-      phone: phone || null,
-      address: address || null,
-      notes: notes || null,
+      name:      name.trim(),
+      abn:       abn?.trim()     || null,
+      address:   address?.trim() || null,
+      notes:     notes?.trim()   || null,
       createdBy: userId,
+      ...(contact && {
+        contacts: {
+          create: {
+            name:      contact.name.trim(),
+            email:     contact.email.trim(),
+            phone:     contact.phone?.trim() || null,
+            isMain:    true,
+            createdBy: userId,
+          },
+        },
+      }),
     },
+    include: { contacts: true },
   });
 
   return NextResponse.json(client, { status: 201 });

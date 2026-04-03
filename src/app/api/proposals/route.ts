@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const {
     title, clientName, clientEmail, clientAbn,
-    content, templateId, clientId,
+    content, templateId, clientId, contactId,
     expiresAt, internalNotes,
     // Legacy pricing fields (still accepted for backward compat)
     pricingData: legacyPricingData,
@@ -105,6 +105,7 @@ export async function POST(request: NextRequest) {
       content:      resolvedContent as object,
       templateId:   templateId  || null,
       clientId:     clientId    || null,
+      contactId:    contactId   || null,
       createdBy:    userId,
       publicId:     generatePublicId(),
       internalNotes: internalNotes || null,
