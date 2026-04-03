@@ -7,6 +7,7 @@ interface AddBlockMenuProps {
   onAddPricing: () => void;
   onAddSignature: () => void;
   onClose: () => void;
+  acceptanceBlockExists?: boolean;
 }
 
 export function AddBlockMenu({
@@ -14,6 +15,7 @@ export function AddBlockMenu({
   onAddPricing,
   onAddSignature,
   onClose,
+  acceptanceBlockExists = false,
 }: AddBlockMenuProps) {
   return (
     <>
@@ -66,17 +68,24 @@ export function AddBlockMenu({
 
         <button
           onClick={() => {
+            if (acceptanceBlockExists) return;
             onAddSignature();
             onClose();
           }}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 text-left transition-colors"
+          disabled={acceptanceBlockExists}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:bg-gray-50"
+          title={acceptanceBlockExists ? "Only one Acceptance block is allowed per proposal" : undefined}
         >
           <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center shrink-0">
             <PenLine size={15} className="text-purple-600" />
           </div>
           <div>
-            <p className="text-sm font-medium text-gray-900">Signature</p>
-            <p className="text-xs text-gray-500">Client acceptance with typed name</p>
+            <p className="text-sm font-medium text-gray-900">Acceptance</p>
+            <p className="text-xs text-gray-500">
+              {acceptanceBlockExists
+                ? "Already added — one per proposal"
+                : "Client e-signs by typing their name"}
+            </p>
           </div>
         </button>
       </div>

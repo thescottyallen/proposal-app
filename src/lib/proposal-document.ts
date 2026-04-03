@@ -31,6 +31,7 @@ export interface PricingBlock {
 export interface SignatureBlock {
   type: "signature";
   id: string;
+  message?: string; // Custom acceptance message shown to the client
 }
 
 export type ProposalBlock = RichTextBlock | PricingBlock | SignatureBlock;

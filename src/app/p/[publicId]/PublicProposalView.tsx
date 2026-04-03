@@ -109,6 +109,9 @@ function legacyPricingSettings(p: ProposalProps): ProposalPricingSettings {
 
 // ─── Signature block ──────────────────────────────────────────────────────────
 
+const DEFAULT_ACCEPTANCE_MESSAGE =
+  "By entering your name below and clicking Accept, you confirm that you have read and agree to the terms of this proposal. Your acceptance will be recorded with a timestamp and IP address.";
+
 function SignatureSection({
   proposalId,
   clientEmail,
@@ -116,6 +119,7 @@ function SignatureSection({
   isExpired,
   accepted,
   onAccepted,
+  message,
 }: {
   proposalId: string;
   clientEmail: string;
@@ -123,6 +127,7 @@ function SignatureSection({
   isExpired: boolean;
   accepted: boolean;
   onAccepted: (signerName: string, clientIncluded: Record<string, boolean>) => Promise<void>;
+  message?: string;
 }) {
   const [signerName, setSignerName] = useState("");
   const [accepting, setAccepting]   = useState(false);
@@ -169,8 +174,7 @@ function SignatureSection({
         Accept this proposal
       </h2>
       <p className="text-sm text-gray-500 mb-5">
-        By entering your name and clicking Accept, you agree to the terms of
-        this proposal. Your acceptance will be recorded with a timestamp.
+        {message || DEFAULT_ACCEPTANCE_MESSAGE}
       </p>
       <div className="space-y-4">
         <div>
@@ -407,6 +411,7 @@ export function PublicProposalView({ proposal, business }: Props) {
                   isExpired={isExpired}
                   accepted={accepted}
                   onAccepted={handleAccept}
+                  message={block.message}
                 />
               );
             }

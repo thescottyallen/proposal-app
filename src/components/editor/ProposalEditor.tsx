@@ -5,7 +5,7 @@ import { Plus, X } from "lucide-react";
 import { PageSidebar } from "./PageSidebar";
 import { RichTextBlock } from "./RichTextBlock";
 import { PricingBlockEditor } from "./PricingBlockEditor";
-import { SignatureBlockEditor } from "./SignatureBlockEditor";
+import { SignatureBlockEditor, DEFAULT_ACCEPTANCE_MESSAGE } from "./SignatureBlockEditor";
 import { AddBlockMenu } from "./AddBlockMenu";
 import {
   ProposalDocument,
@@ -128,7 +128,7 @@ export function ProposalEditor({
         pricingSettings: defaultPricingSettings(),
       };
     } else {
-      newBlock = { type: "signature", id: newId() };
+      newBlock = { type: "signature", id: newId(), message: DEFAULT_ACCEPTANCE_MESSAGE };
     }
 
     updateDoc({
@@ -193,7 +193,13 @@ export function ProposalEditor({
                 )}
 
                 {block.type === "signature" && (
-                  <SignatureBlockEditor />
+                  <SignatureBlockEditor
+                    message={block.message}
+                    onChange={(message) =>
+                      updateBlock(activePage.id, { ...block, message })
+                    }
+                    readOnly={readOnly}
+                  />
                 )}
 
                 {/* Delete button */}
@@ -235,6 +241,9 @@ export function ProposalEditor({
                           addBlock(activePage.id, block.id, "signature")
                         }
                         onClose={() => setAddMenuAfterBlockId(null)}
+                        acceptanceBlockExists={doc.pages.some((p) =>
+                          p.blocks.some((b) => b.type === "signature")
+                        )}
                       />
                     </div>
                   )}
