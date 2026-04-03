@@ -25,6 +25,7 @@ function NewProposalForm() {
   const [clientEmail, setClientEmail] = useState("");
   const [document, setDocument]     = useState<ProposalDocument | null>(null);
   const [saving, setSaving]         = useState(false);
+  const [saveError, setSaveError]   = useState<string | null>(null);
 
   // Load business settings, then initialise the document with correct currency/GST
   useEffect(() => {
@@ -83,6 +84,7 @@ function NewProposalForm() {
   const handleSave = async () => {
     if (!document) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const res = await fetch("/api/proposals", {
         method:  "POST",
@@ -96,10 +98,15 @@ function NewProposalForm() {
           clientId:   clientId   || undefined,
         }),
       });
+      if (!res.ok) {
+        setSaveError("Failed to save proposal. Please try again.");
+        return;
+      }
       const proposal = await res.json();
       router.push(`/proposals/${proposal.id}/edit`);
     } catch (error) {
       console.error("Failed to save proposal:", error);
+      setSaveError("Failed to save proposal. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -147,6 +154,10 @@ function NewProposalForm() {
                 {saving ? "Saving..." : "Save Draft"}
               </button>
             </div>
+
+            {saveError && (
+              <p className="mt-2 text-sm text-red-600">{saveError}</p>
+            )}
 
             {/* Client details */}
             <div className="mt-4 grid grid-cols-2 gap-4 max-w-xl">

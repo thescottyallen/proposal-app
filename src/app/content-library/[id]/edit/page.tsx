@@ -11,7 +11,7 @@ import { Toolbar } from "@/components/editor/Toolbar";
 import { ContentBlockPicker } from "@/components/editor/ContentBlockPicker";
 import { useParams } from "next/navigation";
 import { useState, useEffect } from "react";
-import { ArrowLeft, Save } from "lucide-react";
+import { ArrowLeft, Save, Check } from "lucide-react";
 import Link from "next/link";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 
@@ -44,6 +44,12 @@ export default function EditContentBlockPage() {
   const [loading, setLoading] = useState(true);
   const [hasChanges, setHasChanges] = useState(false);
   const [showBlockPicker, setShowBlockPicker] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const showToast = (message: string) => {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  };
 
   useUnsavedChanges(hasChanges);
 
@@ -99,14 +105,17 @@ export default function EditContentBlockPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await fetch(`/api/content-blocks/${id}`, {
+      const res = await fetch(`/api/content-blocks/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, category, content }),
       });
+      if (!res.ok) { showToast("Save failed"); return; }
       setHasChanges(false);
+      showToast("Saved");
     } catch (error) {
       console.error("Failed to save:", error);
+      showToast("Save failed");
     } finally {
       setSaving(false);
     }
@@ -134,6 +143,12 @@ export default function EditContentBlockPage() {
 
   return (
     <Shell>
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-2.5 bg-gray-900 text-white text-sm rounded-lg shadow-lg">
+          <Check size={14} />
+          {toast}
+        </div>
+      )}
       <div className="px-8 py-8 max-w-4xl">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">

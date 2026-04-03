@@ -31,6 +31,7 @@ export default function ContentLibraryPage() {
   const [newName, setNewName] = useState("");
   const [newCategory, setNewCategory] = useState(CATEGORIES[0]);
   const [filterCategory, setFilterCategory] = useState("ALL");
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const loadBlocks = () => {
     fetch("/api/content-blocks")
@@ -48,7 +49,8 @@ export default function ContentLibraryPage() {
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
-    await fetch("/api/content-blocks", {
+    setCreateError(null);
+    const res = await fetch("/api/content-blocks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -65,6 +67,10 @@ export default function ContentLibraryPage() {
         },
       }),
     });
+    if (!res.ok) {
+      setCreateError("Failed to create content block. Please try again.");
+      return;
+    }
     setNewName("");
     setShowCreate(false);
     loadBlocks();
@@ -135,6 +141,9 @@ export default function ContentLibraryPage() {
                 Cancel
               </button>
             </div>
+            {createError && (
+              <p className="mt-2 text-sm text-red-600">{createError}</p>
+            )}
           </div>
         )}
 

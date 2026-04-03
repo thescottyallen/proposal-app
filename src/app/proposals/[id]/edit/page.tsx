@@ -151,11 +151,12 @@ export default function EditProposalPage() {
     if (!document) return;
     setSaving(true);
     try {
-      await fetch(`/api/proposals/${id}`, {
+      const res = await fetch(`/api/proposals/${id}`, {
         method:  "PATCH",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify(buildSaveBody()),
       });
+      if (!res.ok) { showToast("Save failed"); return; }
       setHasChanges(false);
       showToast("Saved");
     } catch {
