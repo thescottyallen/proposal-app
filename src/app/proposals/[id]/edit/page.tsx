@@ -350,11 +350,6 @@ export default function EditProposalPage() {
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(proposal.status)}`}>
                   {proposal.status}
                 </span>
-                {proposal.invoiceNumber && (
-                  <span className="text-xs text-gray-400 font-mono">
-                    {proposal.invoiceNumber}
-                  </span>
-                )}
               </div>
               <div className="flex items-center gap-2">
                 {!isAccepted && (

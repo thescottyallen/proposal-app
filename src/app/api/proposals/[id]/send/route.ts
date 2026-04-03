@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { sendProposalEmail } from "@/lib/email";
-import { formatInvoiceNumber } from "@/lib/utils";
 
 // POST /api/proposals/:id/send
 export async function POST(
@@ -41,33 +40,11 @@ export async function POST(
       message,
     });
 
-    // Assign invoice number on first send (atomic increment)
-    let invoiceNumber = proposal.invoiceNumber;
-    if (!invoiceNumber) {
-      const bizSettings = await prisma.businessSettings.upsert({
-        where:  { userId },
-        create: { userId },
-        update: { invoiceSeq: { increment: 1 } },
-      });
-      // If it was just created (seq = 0), do another increment
-      const seq = bizSettings.invoiceSeq === 0
-        ? (await prisma.businessSettings.update({
-            where:  { userId },
-            data:   { invoiceSeq: { increment: 1 } },
-          })).invoiceSeq
-        : bizSettings.invoiceSeq;
-
-      invoiceNumber = formatInvoiceNumber(bizSettings.invoicePrefix, seq);
-    }
-
-    // Update status to SENT if it was DRAFT, and persist invoice number
-    if (proposal.status === "DRAFT" || !proposal.invoiceNumber) {
+    // Update status to SENT if it was DRAFT
+    if (proposal.status === "DRAFT") {
       await prisma.proposal.update({
         where: { id },
-        data: {
-          ...(proposal.status === "DRAFT" && { status: "SENT" }),
-          ...(!proposal.invoiceNumber && { invoiceNumber }),
-        },
+        data:  { status: "SENT" },
       });
     }
 
@@ -75,7 +52,7 @@ export async function POST(
       data: { proposalId: id, eventType: "sent" },
     });
 
-    return NextResponse.json({ success: true, invoiceNumber });
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Failed to send proposal email:", error);
     return NextResponse.json(

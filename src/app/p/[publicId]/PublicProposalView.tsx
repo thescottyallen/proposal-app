@@ -308,11 +308,7 @@ export function PublicProposalView({ proposal, business }: Props) {
                 ABN {proposal.clientAbn}
               </span>
             )}
-            {proposal.invoiceNumber && (
-              <span className="text-xs font-mono text-gray-400">
-                {proposal.invoiceNumber}
-              </span>
-            )}
+
             {expiry && (
               <span
                 className={`text-xs px-2.5 py-1 rounded-full border font-medium ${expiry.color}`}
