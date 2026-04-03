@@ -6,7 +6,7 @@ import { useRouter, useParams } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import {
   ArrowLeft, Save, Send, Copy, Trash2,
-  BookmarkPlus, Check, Mail, X, Link2,
+  BookmarkPlus, Check, Mail, X, Link2, Lock,
 } from "lucide-react";
 import Link from "next/link";
 import { getStatusColor, formatDate } from "@/lib/utils";
@@ -96,6 +96,11 @@ export default function EditProposalPage() {
   const [sendMessage, setSendMessage]     = useState("");
   const [sending, setSending]             = useState(false);
   const [sendError, setSendError]         = useState("");
+  const [showFollowUpModal, setShowFollowUpModal] = useState(false);
+  const [followUpTo, setFollowUpTo]               = useState("");
+  const [followUpMessage, setFollowUpMessage]     = useState("");
+  const [followUpSending, setFollowUpSending]     = useState(false);
+  const [followUpError, setFollowUpError]         = useState("");
 
   const { clearChanges } = useUnsavedChanges(hasChanges);
 
@@ -253,6 +258,33 @@ export default function EditProposalPage() {
     }
   };
 
+  const handleSendFollowUp = async () => {
+    if (!followUpTo.trim() || !followUpTo.includes("@")) {
+      setFollowUpError("Please enter a valid email address.");
+      return;
+    }
+    setFollowUpSending(true);
+    setFollowUpError("");
+    try {
+      const res = await fetch(`/api/proposals/${id}/followup`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ to: followUpTo, message: followUpMessage }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setFollowUpError(data.error || "Failed to send follow-up.");
+        return;
+      }
+      setShowFollowUpModal(false);
+      showToast("Follow-up sent to " + followUpTo);
+    } catch {
+      setFollowUpError("Network error. Please try again.");
+    } finally {
+      setFollowUpSending(false);
+    }
+  };
+
   if (loading || !document) {
     return (
       <Shell>
@@ -273,6 +305,8 @@ export default function EditProposalPage() {
     );
   }
 
+  const isAccepted = proposal.status === "ACCEPTED";
+
   return (
     <Shell>
       {/* Toast */}
@@ -280,6 +314,16 @@ export default function EditProposalPage() {
         <div className="fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-2.5 bg-gray-900 text-white text-sm rounded-lg shadow-lg">
           <Check size={14} />
           {toast}
+        </div>
+      )}
+
+      {/* Accepted lock banner */}
+      {isAccepted && (
+        <div className="flex items-center gap-3 px-8 py-3 bg-green-50 border-b border-green-200">
+          <Lock size={14} className="text-green-600 shrink-0" />
+          <p className="text-sm text-green-700 font-medium">
+            This proposal has been accepted and is locked from editing.
+          </p>
         </div>
       )}
 
@@ -299,8 +343,9 @@ export default function EditProposalPage() {
                 <input
                   type="text"
                   value={title}
-                  onChange={(e) => { setTitle(e.target.value); setHasChanges(true); }}
-                  className="text-2xl font-bold text-gray-900 border-0 bg-transparent focus:outline-none focus:ring-0 p-0"
+                  onChange={(e) => { if (!isAccepted) { setTitle(e.target.value); setHasChanges(true); } }}
+                  readOnly={isAccepted}
+                  className={`text-2xl font-bold text-gray-900 border-0 bg-transparent focus:outline-none focus:ring-0 p-0 ${isAccepted ? "cursor-default select-none" : ""}`}
                 />
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(proposal.status)}`}>
                   {proposal.status}
@@ -312,14 +357,16 @@ export default function EditProposalPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                >
-                  <Save size={14} />
-                  {saving ? "Saving..." : "Save"}
-                </button>
+                {!isAccepted && (
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  >
+                    <Save size={14} />
+                    {saving ? "Saving..." : "Save"}
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     setSendTo(clientEmail || "");
@@ -330,7 +377,7 @@ export default function EditProposalPage() {
                   className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
                 >
                   <Send size={14} />
-                  Send
+                  {isAccepted ? "Resend" : "Send"}
                 </button>
               </div>
             </div>
@@ -341,6 +388,20 @@ export default function EditProposalPage() {
                 <Link2 size={12} />
                 Copy public link
               </button>
+              {["SENT", "VIEWED"].includes(proposal.status) && (
+                <button
+                  onClick={() => {
+                    setFollowUpTo(clientEmail || "");
+                    setFollowUpMessage("");
+                    setFollowUpError("");
+                    setShowFollowUpModal(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-blue-600 border border-blue-200 rounded-md hover:bg-blue-50"
+                >
+                  <Mail size={12} />
+                  Send Follow-up
+                </button>
+              )}
               <button onClick={handleDuplicate} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">
                 <Copy size={12} />
                 Duplicate
@@ -380,8 +441,9 @@ export default function EditProposalPage() {
                 <input
                   type="text"
                   value={clientName}
-                  onChange={(e) => { setClientName(e.target.value); setHasChanges(true); }}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => { if (!isAccepted) { setClientName(e.target.value); setHasChanges(true); } }}
+                  readOnly={isAccepted}
+                  className={`w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none ${isAccepted ? "bg-gray-50 cursor-default" : "focus:ring-2 focus:ring-blue-500"}`}
                   placeholder="Acme Corp"
                 />
               </div>
@@ -390,8 +452,9 @@ export default function EditProposalPage() {
                 <input
                   type="email"
                   value={clientEmail}
-                  onChange={(e) => { setClientEmail(e.target.value); setHasChanges(true); }}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => { if (!isAccepted) { setClientEmail(e.target.value); setHasChanges(true); } }}
+                  readOnly={isAccepted}
+                  className={`w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none ${isAccepted ? "bg-gray-50 cursor-default" : "focus:ring-2 focus:ring-blue-500"}`}
                   placeholder="contact@acme.com"
                 />
               </div>
@@ -400,8 +463,9 @@ export default function EditProposalPage() {
                 <input
                   type="text"
                   value={clientAbn}
-                  onChange={(e) => { setClientAbn(e.target.value); setHasChanges(true); }}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => { if (!isAccepted) { setClientAbn(e.target.value); setHasChanges(true); } }}
+                  readOnly={isAccepted}
+                  className={`w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none ${isAccepted ? "bg-gray-50 cursor-default" : "focus:ring-2 focus:ring-blue-500"}`}
                   placeholder="12 345 678 901"
                 />
               </div>
@@ -410,8 +474,9 @@ export default function EditProposalPage() {
                 <input
                   type="date"
                   value={expiresAt}
-                  onChange={(e) => { setExpiresAt(e.target.value); setHasChanges(true); }}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => { if (!isAccepted) { setExpiresAt(e.target.value); setHasChanges(true); } }}
+                  readOnly={isAccepted}
+                  className={`w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none ${isAccepted ? "bg-gray-50 cursor-default" : "focus:ring-2 focus:ring-blue-500"}`}
                 />
               </div>
             </div>
@@ -419,10 +484,11 @@ export default function EditProposalPage() {
               <label className="block text-xs text-gray-500 mb-1">Internal notes (never visible to client)</label>
               <textarea
                 value={internalNotes}
-                onChange={(e) => { setInternalNotes(e.target.value); setHasChanges(true); }}
+                onChange={(e) => { if (!isAccepted) { setInternalNotes(e.target.value); setHasChanges(true); } }}
+                readOnly={isAccepted}
                 rows={2}
                 placeholder="Notes for your reference only..."
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                className={`w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none resize-none ${isAccepted ? "bg-gray-50 cursor-default" : "focus:ring-2 focus:ring-blue-500"}`}
               />
             </div>
           </div>
@@ -433,6 +499,7 @@ export default function EditProposalPage() {
               initialDocument={document}
               onUpdate={handleEditorUpdate}
               gstRegistered={gstRegistered}
+              readOnly={isAccepted}
             />
           </div>
         </div>
@@ -489,6 +556,62 @@ export default function EditProposalPage() {
               >
                 <Send size={14} />
                 {sending ? "Sending..." : "Send Email"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Follow-up modal */}
+      {showFollowUpModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/20" onClick={() => setShowFollowUpModal(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div className="flex items-center gap-2">
+                <Mail size={18} className="text-blue-600" />
+                <h2 className="text-sm font-semibold text-gray-900">Send Follow-up</h2>
+              </div>
+              <button onClick={() => setShowFollowUpModal(false)} className="p-1 text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <p className="text-xs text-gray-500">
+                Send a follow-up email with a link back to &ldquo;{title}&rdquo;.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Send to</label>
+                <input
+                  type="email"
+                  value={followUpTo}
+                  onChange={(e) => setFollowUpTo(e.target.value)}
+                  placeholder="client@example.com"
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onKeyDown={(e) => e.key === "Enter" && handleSendFollowUp()}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Message (optional)</label>
+                <textarea
+                  value={followUpMessage}
+                  onChange={(e) => setFollowUpMessage(e.target.value)}
+                  placeholder="Just checking in..."
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
+              {followUpError && <p className="text-xs text-red-600">{followUpError}</p>}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-200">
+              <button onClick={() => setShowFollowUpModal(false)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button
+                onClick={handleSendFollowUp}
+                disabled={followUpSending}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Send size={14} />
+                {followUpSending ? "Sending..." : "Send Follow-up"}
               </button>
             </div>
           </div>

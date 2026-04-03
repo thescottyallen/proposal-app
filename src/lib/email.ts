@@ -158,6 +158,46 @@ export async function sendAcceptanceNotificationToOwner({
   if (error) console.error("Failed to send owner acceptance notification:", error.message);
 }
 
+// ─── Follow-up email to client ────────────────────────────────────────────────
+
+interface FollowUpEmailParams {
+  to:            string;
+  clientName:    string;
+  proposalTitle: string;
+  publicUrl:     string;
+  senderName?:   string;
+  message?:      string;
+}
+
+export async function sendFollowUpEmail({
+  to, clientName, proposalTitle, publicUrl, senderName, message,
+}: FollowUpEmailParams) {
+  const greeting      = clientName ? `Hi ${clientName},` : "Hi,";
+  const customMessage = message
+    ? `<p style="font-size:15px;line-height:1.6;color:#374151;margin:0 0 24px 0;">${message.replace(/\n/g, "<br/>")}</p>`
+    : "";
+
+  const { error } = await resend.emails.send({
+    from:    FROM,
+    to:      [to],
+    subject: `Following up: ${proposalTitle}`,
+    html: emailWrapper(`
+      <h1 style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">Following up on your proposal</h1>
+    `, `
+      <p style="font-size:15px;line-height:1.6;color:#374151;margin:0 0 16px 0;">${greeting}</p>
+      ${customMessage}
+      <p style="font-size:15px;line-height:1.6;color:#374151;margin:0 0 32px 0;">
+        ${senderName ? `${senderName} wanted to follow up` : "Just following up"} on the proposal
+        <strong>${proposalTitle}</strong>. You can view it using the link below.
+      </p>
+      ${ctaButton(publicUrl, "View Proposal")}
+      ${fallbackLink(publicUrl)}
+    `),
+  });
+
+  if (error) throw new Error(`Failed to send follow-up email: ${error.message}`);
+}
+
 // ─── HTML helpers ─────────────────────────────────────────────────────────────
 
 function emailWrapper(header: string, body: string): string {
