@@ -44,6 +44,11 @@ export interface ColumnCell {
   /** Public URL or base64 data URL — used when type === "image" */
   imageUrl: string;
   imageAlt: string;
+  /**
+   * How many grid columns this cell spans. Defaults to 1.
+   * The sum of colSpan values in a row must equal the block's columnCount.
+   */
+  colSpan?: number;
 }
 
 export interface ColumnBlock {

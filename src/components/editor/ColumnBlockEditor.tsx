@@ -328,11 +328,24 @@ function makeTextCell(): ColumnCell {
     content: { type: "doc", content: [{ type: "paragraph" }] },
     imageUrl: "",
     imageAlt: "",
+    colSpan: 1,
   };
 }
 
 function makeRow(count: number): ColumnCell[] {
   return Array.from({ length: count }, () => makeTextCell());
+}
+
+/** CSS class for a cell's column span */
+function spanClass(span: number): string {
+  if (span === 3) return "col-span-3";
+  if (span === 2) return "col-span-2";
+  return "col-span-1";
+}
+
+/** Total span consumed by a row */
+function rowSpanTotal(row: ColumnCell[]): number {
+  return row.reduce((sum, c) => sum + (c.colSpan ?? 1), 0);
 }
 
 export function ColumnBlockEditor({
@@ -362,17 +375,58 @@ export function ColumnBlockEditor({
     updateCell(rowIdx, colIdx, { ...cell, type });
   };
 
+  /** Merge a cell with the one to its right — absorbs the right cell's span */
+  const mergeRight = (rowIdx: number, colIdx: number) => {
+    const row = block.rows[rowIdx];
+    const cell = row[colIdx];
+    const next = row[colIdx + 1];
+    if (!next) return;
+    const newSpan = (cell.colSpan ?? 1) + (next.colSpan ?? 1);
+    if (newSpan > block.columnCount) return; // safety guard
+    const newRow = row
+      .map((c, ci) => (ci === colIdx ? { ...c, colSpan: newSpan } : c))
+      .filter((_, ci) => ci !== colIdx + 1);
+    onChange({
+      ...block,
+      rows: block.rows.map((r, ri) => (ri === rowIdx ? newRow : r)),
+    });
+  };
+
+  /** Split a merged cell back by one column — inserts a blank cell to its right */
+  const splitCell = (rowIdx: number, colIdx: number) => {
+    const row = block.rows[rowIdx];
+    const cell = row[colIdx];
+    const currentSpan = cell.colSpan ?? 1;
+    if (currentSpan <= 1) return;
+    const newRow = [...row];
+    newRow[colIdx] = { ...cell, colSpan: currentSpan - 1 };
+    newRow.splice(colIdx + 1, 0, makeTextCell());
+    onChange({
+      ...block,
+      rows: block.rows.map((r, ri) => (ri === rowIdx ? newRow : r)),
+    });
+  };
+
   const setColumnCount = (count: 2 | 3) => {
     const rows = block.rows.map((row) => {
-      if (count > row.length) {
-        // Add blank cells to reach the new column count
-        return [
-          ...row,
-          ...Array.from({ length: count - row.length }, () => makeTextCell()),
+      // Normalise spans so nothing exceeds the new column count
+      let normalised: ColumnCell[] = row.map((c) => ({
+        ...c,
+        colSpan: Math.min(c.colSpan ?? 1, count),
+      }));
+      // If the row is now under-filled, add blank cells
+      const total = rowSpanTotal(normalised);
+      if (total < count) {
+        normalised = [
+          ...normalised,
+          ...Array.from({ length: count - total }, () => makeTextCell()),
         ];
       }
-      // Trim to the new count
-      return row.slice(0, count);
+      // If over-filled (e.g. 2→3 with a span-2 cell), trim trailing cells
+      while (rowSpanTotal(normalised) > count && normalised.length > 1) {
+        normalised = normalised.slice(0, -1);
+      }
+      return normalised;
     });
     onChange({ ...block, columnCount: count, rows });
   };
@@ -466,56 +520,88 @@ export function ColumnBlockEditor({
 
             {/* Cell grid */}
             <div className={`grid ${gridCols}`}>
-              {row.map((cell, colIdx) => (
-                <div
-                  key={cell.id}
-                  className={`relative group/cell ${cellBorder} p-2`}
-                >
-                  {/* Cell type toggle */}
-                  {!readOnly && (
-                    <button
-                      onClick={() =>
-                        switchCellType(
-                          rowIdx,
-                          colIdx,
-                          cell.type === "text" ? "image" : "text"
-                        )
-                      }
-                      className="absolute top-1.5 right-1.5 z-10 w-5 h-5 flex items-center justify-center rounded bg-white border border-gray-200 text-gray-400 hover:text-gray-700 hover:border-gray-400 opacity-0 group-hover/cell:opacity-100 transition-all shadow-sm"
-                      title={
-                        cell.type === "text"
-                          ? "Switch to image"
-                          : "Switch to text"
-                      }
-                    >
-                      {cell.type === "text" ? (
-                        <ImageIcon size={10} />
-                      ) : (
-                        <Type size={10} />
-                      )}
-                    </button>
-                  )}
+              {row.map((cell, colIdx) => {
+                const span = cell.colSpan ?? 1;
+                const canMergeRight =
+                  !readOnly &&
+                  colIdx < row.length - 1 &&
+                  span + (row[colIdx + 1]?.colSpan ?? 1) <= block.columnCount;
+                const canSplit = !readOnly && span > 1;
 
-                  {/* Cell content */}
-                  <div className="pt-1">
-                    {cell.type === "text" ? (
-                      <TextCell
-                        key={`text-${cell.id}`}
-                        cell={cell}
-                        onUpdate={(c) => updateCell(rowIdx, colIdx, c)}
-                        readOnly={readOnly}
-                      />
-                    ) : (
-                      <ImageCell
-                        key={`img-${cell.id}`}
-                        cell={cell}
-                        onUpdate={(c) => updateCell(rowIdx, colIdx, c)}
-                        readOnly={readOnly}
-                      />
+                return (
+                  <div
+                    key={cell.id}
+                    className={`relative group/cell ${cellBorder} p-2 ${spanClass(span)}`}
+                  >
+                    {/* Cell controls: type toggle + merge/split */}
+                    {!readOnly && (
+                      <div className="absolute top-1.5 right-1.5 z-10 flex items-center gap-0.5 opacity-0 group-hover/cell:opacity-100 transition-all">
+                        {/* Merge right */}
+                        {canMergeRight && (
+                          <button
+                            onClick={() => mergeRight(rowIdx, colIdx)}
+                            className="h-5 px-1.5 flex items-center rounded bg-white border border-gray-200 text-gray-400 hover:text-orange-600 hover:border-orange-300 shadow-sm text-[10px] font-medium"
+                            title="Merge with next column"
+                          >
+                            Merge →
+                          </button>
+                        )}
+                        {/* Split */}
+                        {canSplit && (
+                          <button
+                            onClick={() => splitCell(rowIdx, colIdx)}
+                            className="h-5 px-1.5 flex items-center rounded bg-white border border-gray-200 text-gray-400 hover:text-orange-600 hover:border-orange-300 shadow-sm text-[10px] font-medium"
+                            title="Split merged cell"
+                          >
+                            Split
+                          </button>
+                        )}
+                        {/* Type toggle */}
+                        <button
+                          onClick={() =>
+                            switchCellType(
+                              rowIdx,
+                              colIdx,
+                              cell.type === "text" ? "image" : "text"
+                            )
+                          }
+                          className="w-5 h-5 flex items-center justify-center rounded bg-white border border-gray-200 text-gray-400 hover:text-gray-700 hover:border-gray-400 shadow-sm"
+                          title={
+                            cell.type === "text"
+                              ? "Switch to image"
+                              : "Switch to text"
+                          }
+                        >
+                          {cell.type === "text" ? (
+                            <ImageIcon size={10} />
+                          ) : (
+                            <Type size={10} />
+                          )}
+                        </button>
+                      </div>
                     )}
+
+                    {/* Cell content */}
+                    <div className="pt-1">
+                      {cell.type === "text" ? (
+                        <TextCell
+                          key={`text-${cell.id}`}
+                          cell={cell}
+                          onUpdate={(c) => updateCell(rowIdx, colIdx, c)}
+                          readOnly={readOnly}
+                        />
+                      ) : (
+                        <ImageCell
+                          key={`img-${cell.id}`}
+                          cell={cell}
+                          onUpdate={(c) => updateCell(rowIdx, colIdx, c)}
+                          readOnly={readOnly}
+                        />
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Row divider */}
@@ -542,7 +628,7 @@ export function ColumnBlockReadOnly({ block }: { block: ColumnBlockType }) {
           <div key={rowIdx}>
             <div className={`grid ${gridCols}`}>
               {row.map((cell) => (
-                <div key={cell.id} className={`${cellBorder} p-2`}>
+                <div key={cell.id} className={`${cellBorder} p-2 ${spanClass(cell.colSpan ?? 1)}`}>
                   {cell.type === "text" ? (
                     <ReadOnlyTextCell content={cell.content} />
                   ) : cell.imageUrl ? (
