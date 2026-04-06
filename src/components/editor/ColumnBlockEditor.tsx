@@ -8,7 +8,7 @@ import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
-import { AlignCenter, AlignLeft, AlignRight, Columns2, Grid3X3, ImageIcon, Plus, Trash2, Type, Upload, X } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Columns2, Grid3X3, ImageIcon, Link2, Plus, Trash2, Type, Upload, X } from "lucide-react";
 import type { ColumnBlock as ColumnBlockType, ColumnCell } from "@/lib/proposal-document";
 import { newId } from "@/lib/proposal-document";
 
@@ -106,36 +106,51 @@ function TextCell({ cell, onUpdate, readOnly }: TextCellProps) {
             U
           </button>
           <div className="w-px h-3 bg-gray-200 mx-0.5" />
-          <select
-            onMouseDown={(e) => e.stopPropagation()}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val === "p") {
-                editor?.chain().focus().setParagraph().run();
+          {/* Heading buttons — onMouseDown keeps editor focused */}
+          {(["H1", "H2", "H3"] as const).map((label, i) => {
+            const level = (i + 1) as 1 | 2 | 3;
+            const active = editor?.isActive("heading", { level }) ?? false;
+            return (
+              <button
+                key={label}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  if (active) {
+                    editor?.chain().focus().setParagraph().run();
+                  } else {
+                    editor?.chain().focus().setHeading({ level }).run();
+                  }
+                }}
+                className={`px-1.5 py-0.5 rounded text-xs font-semibold transition-colors ${
+                  active ? "bg-blue-100 text-blue-700" : "text-gray-600 hover:bg-gray-100"
+                }`}
+                title={active ? "Convert to paragraph" : `Heading ${level}`}
+              >
+                {label}
+              </button>
+            );
+          })}
+          <div className="w-px h-3 bg-gray-200 mx-0.5" />
+          {/* Link button */}
+          <button
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const prev = editor?.getAttributes("link").href as string | undefined;
+              const url = window.prompt("Enter link URL (leave blank to remove):", prev ?? "https://");
+              if (url === null) return;
+              if (url === "") {
+                editor?.chain().focus().extendMarkRange("link").unsetLink().run();
               } else {
-                editor
-                  ?.chain()
-                  .focus()
-                  .setHeading({ level: parseInt(val) as 1 | 2 | 3 })
-                  .run();
+                editor?.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
               }
             }}
-            value={
-              editor?.isActive("heading", { level: 1 })
-                ? "1"
-                : editor?.isActive("heading", { level: 2 })
-                ? "2"
-                : editor?.isActive("heading", { level: 3 })
-                ? "3"
-                : "p"
-            }
-            className="text-xs text-gray-600 bg-transparent border-none outline-none cursor-pointer hover:bg-gray-100 rounded px-1 py-0.5"
+            className={`p-0.5 rounded transition-colors ${
+              editor?.isActive("link") ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:bg-gray-100"
+            }`}
+            title={editor?.isActive("link") ? "Edit link" : "Add link"}
           >
-            <option value="p">Normal</option>
-            <option value="1">H1</option>
-            <option value="2">H2</option>
-            <option value="3">H3</option>
-          </select>
+            <Link2 size={11} />
+          </button>
           <div className="w-px h-3 bg-gray-200 mx-0.5" />
           <button
             onMouseDown={(e) => {
