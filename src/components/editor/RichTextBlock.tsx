@@ -32,10 +32,6 @@ interface RichTextBlockProps {
   block: RichTextBlockType;
   onChange: (content: Record<string, unknown>) => void;
   readOnly?: boolean;
-  /**
-   * When provided, clicking the content-block icon in the toolbar calls this
-   * instead of opening a local picker — lets ProposalEditor own insertion.
-   */
   onInsertContentBlock?: () => void;
 }
 
@@ -70,7 +66,10 @@ export function RichTextBlock({
     : () => setShowBlockPicker(true);
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+    <div
+      className="rounded-lg border border-gray-200 shadow-sm"
+      style={{ backgroundColor: block.backgroundColor || "#ffffff" }}
+    >
       {!readOnly && (
         <Toolbar
           editor={editor}
@@ -95,8 +94,10 @@ export function RichTextBlock({
 /** Read-only version used in the public proposal view */
 export function RichTextBlockReadOnly({
   content,
+  backgroundColor,
 }: {
   content: Record<string, unknown>;
+  backgroundColor?: string;
 }) {
   const editor = useEditor({
     extensions: [
@@ -111,7 +112,10 @@ export function RichTextBlockReadOnly({
   });
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+    <div
+      className="rounded-lg border border-gray-200 shadow-sm"
+      style={{ backgroundColor: backgroundColor || "#ffffff" }}
+    >
       <div className="px-8 py-6">
         <EditorContent editor={editor} className={PROSE} />
       </div>

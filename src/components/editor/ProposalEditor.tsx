@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Plus, X } from "lucide-react";
+import { useRef, useState, useCallback } from "react";
+import { Palette, Plus, X } from "lucide-react";
 import { PageSidebar } from "./PageSidebar";
 import { RichTextBlock } from "./RichTextBlock";
 import { PricingBlockEditor } from "./PricingBlockEditor";
@@ -14,6 +14,7 @@ import {
   ProposalPage,
   ProposalBlock,
   ColumnBlock,
+  SidebarSettings,
   newId,
 } from "@/lib/proposal-document";
 import {
@@ -40,11 +41,12 @@ export function ProposalEditor({
   const [activePageId, setActivePageId] = useState<string>(
     initialDocument.pages[0]?.id ?? ""
   );
-  const [addMenuAfterBlockId, setAddMenuAfterBlockId] = useState<string | null>(
-    null
-  );
+  const [addMenuAfterBlockId, setAddMenuAfterBlockId] = useState<string | null>(null);
   // Tracks which block's toolbar triggered the content-block picker
   const [contentBlockPickerAfterId, setContentBlockPickerAfterId] = useState<string | null>(null);
+  // Per-block colour picker: stores the block id whose picker is open
+  const [colorPickerBlockId, setColorPickerBlockId] = useState<string | null>(null);
+  const colorInputRef = useRef<HTMLInputElement>(null);
 
   const activePage =
     doc.pages.find((p) => p.id === activePageId) ?? doc.pages[0];
@@ -164,6 +166,11 @@ export function ProposalEditor({
     setAddMenuAfterBlockId(null);
   };
 
+  // Update sidebar settings (logo / background colour)
+  const updateSidebar = (settings: SidebarSettings) => {
+    updateDoc({ ...doc, sidebar: settings });
+  };
+
   // Insert content blocks (from library) after a given block
   const insertContentBlocksAfter = (afterBlockId: string, blocks: ProposalBlock[]) => {
     updateDoc({
@@ -190,6 +197,8 @@ export function ProposalEditor({
         onSelectPage={setActivePageId}
         onAddPage={handleAddPage}
         onRenamePage={handleRenamePage}
+        sidebar={doc.sidebar}
+        onUpdateSidebar={readOnly ? undefined : updateSidebar}
       />
 
       {/* Block list */}
@@ -229,6 +238,7 @@ export function ProposalEditor({
                     }
                     readOnly={readOnly}
                     gstRegistered={gstRegistered}
+                    backgroundColor={block.backgroundColor}
                   />
                 )}
 
@@ -239,6 +249,7 @@ export function ProposalEditor({
                       updateBlock(activePage.id, { ...block, message })
                     }
                     readOnly={readOnly}
+                    backgroundColor={block.backgroundColor}
                   />
                 )}
 
@@ -247,18 +258,43 @@ export function ProposalEditor({
                     block={block}
                     onChange={(updated) => updateBlock(activePage.id, updated)}
                     readOnly={readOnly}
+                    backgroundColor={block.backgroundColor}
                   />
                 )}
 
-                {/* Delete button */}
-                {!readOnly && activePage.blocks.length > 1 && (
-                  <button
-                    onClick={() => deleteBlock(activePage.id, block.id)}
-                    className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-white border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-300 flex items-center justify-center opacity-0 group-hover/block:opacity-100 transition-all shadow-sm z-10"
-                    title="Remove block"
-                  >
-                    <X size={12} />
-                  </button>
+                {/* Block controls: colour + delete */}
+                {!readOnly && (
+                  <div className="absolute -top-2 -right-2 flex items-center gap-1 opacity-0 group-hover/block:opacity-100 transition-all z-10">
+                    {/* Background colour picker */}
+                    <button
+                      onClick={() => {
+                        setColorPickerBlockId(block.id);
+                        // small delay so state is set before click
+                        setTimeout(() => colorInputRef.current?.click(), 0);
+                      }}
+                      className="w-6 h-6 rounded-full bg-white border border-gray-200 flex items-center justify-center shadow-sm hover:border-gray-400"
+                      title="Block background colour"
+                    >
+                      {block.backgroundColor ? (
+                        <span
+                          className="w-3 h-3 rounded-full border border-black/10 inline-block"
+                          style={{ backgroundColor: block.backgroundColor }}
+                        />
+                      ) : (
+                        <Palette size={11} className="text-gray-400" />
+                      )}
+                    </button>
+                    {/* Delete */}
+                    {activePage.blocks.length > 1 && (
+                      <button
+                        onClick={() => deleteBlock(activePage.id, block.id)}
+                        className="w-6 h-6 rounded-full bg-white border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-300 flex items-center justify-center shadow-sm"
+                        title="Remove block"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -305,7 +341,7 @@ export function ProposalEditor({
         </div>
       </div>
 
-      {/* Page-level content block picker — inserts ProposalBlocks at the right position */}
+      {/* Page-level content block picker */}
       {!readOnly && (
         <ContentBlockPicker
           isOpen={contentBlockPickerAfterId !== null}
@@ -315,6 +351,26 @@ export function ProposalEditor({
               insertContentBlocksAfter(contentBlockPickerAfterId, blocks);
             }
           }}
+        />
+      )}
+
+      {/* Hidden colour input shared across all blocks */}
+      {!readOnly && (
+        <input
+          ref={colorInputRef}
+          type="color"
+          className="sr-only"
+          value={
+            (colorPickerBlockId
+              ? activePage.blocks.find((b) => b.id === colorPickerBlockId)?.backgroundColor
+              : undefined) || "#ffffff"
+          }
+          onChange={(e) => {
+            if (!colorPickerBlockId) return;
+            const block = activePage.blocks.find((b) => b.id === colorPickerBlockId);
+            if (block) updateBlock(activePage.id, { ...block, backgroundColor: e.target.value });
+          }}
+          onBlur={() => setColorPickerBlockId(null)}
         />
       )}
     </div>

@@ -10,6 +10,7 @@ interface SignatureBlockEditorProps {
   message?: string;
   onChange?: (message: string) => void;
   readOnly?: boolean;
+  backgroundColor?: string;
 }
 
 /**
@@ -21,6 +22,7 @@ export function SignatureBlockEditor({
   message,
   onChange,
   readOnly,
+  backgroundColor,
 }: SignatureBlockEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -33,7 +35,10 @@ export function SignatureBlockEditor({
   }, [message]);
 
   return (
-    <div className="bg-white rounded-lg border border-dashed border-gray-300">
+    <div
+      className="rounded-lg border border-dashed border-gray-300"
+      style={{ backgroundColor: backgroundColor || "#ffffff" }}
+    >
       <div className="px-6 py-6">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">

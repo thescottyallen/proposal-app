@@ -109,6 +109,15 @@ function legacyPricingSettings(p: ProposalProps): ProposalPricingSettings {
   };
 }
 
+/** Detect whether a hex colour is dark enough to warrant light text */
+function isDarkColour(hex: string): boolean {
+  if (!hex || !hex.startsWith("#") || hex.length < 7) return false;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 < 128;
+}
+
 // ─── Signature block ──────────────────────────────────────────────────────────
 
 const DEFAULT_ACCEPTANCE_MESSAGE =
@@ -209,6 +218,85 @@ function SignatureSection({
   );
 }
 
+// ─── Left sidebar ─────────────────────────────────────────────────────────────
+
+function ProposalSidebar({
+  doc,
+  activePageId,
+  onSelectPage,
+}: {
+  doc: ProposalDocument;
+  activePageId: string;
+  onSelectPage: (id: string) => void;
+}) {
+  const bgColour = doc.sidebar?.backgroundColor || "#ffffff";
+  const dark = isDarkColour(bgColour);
+
+  const textClass     = dark ? "text-white"     : "text-gray-800";
+  const subTextClass  = dark ? "text-white/60"  : "text-gray-400";
+  const dividerClass  = dark ? "border-white/10": "border-gray-100";
+  const activeClass   = dark
+    ? "bg-white/15 text-white font-medium"
+    : "bg-gray-100 text-gray-900 font-medium";
+  const hoverClass    = dark
+    ? "text-white/70 hover:bg-white/10 hover:text-white"
+    : "text-gray-500 hover:bg-gray-50 hover:text-gray-700";
+
+  return (
+    <aside
+      className="sticky top-0 h-screen w-56 shrink-0 flex flex-col overflow-y-auto"
+      style={{ backgroundColor: bgColour }}
+    >
+      {/* Logo */}
+      {doc.sidebar?.logoUrl && (
+        <div className="px-4 pt-6 pb-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={doc.sidebar.logoUrl}
+            alt="Logo"
+            className="max-h-12 max-w-full object-contain"
+          />
+        </div>
+      )}
+
+      {/* Page navigation */}
+      {doc.pages.length > 1 && (
+        <nav className={`flex-1 px-3 ${doc.sidebar?.logoUrl ? "pt-2" : "pt-6"} pb-6`}>
+          {doc.sidebar?.logoUrl && (
+            <div className={`border-t ${dividerClass} mb-3`} />
+          )}
+          <p className={`text-xs font-semibold uppercase tracking-wider px-2 mb-2 ${subTextClass}`}>
+            Pages
+          </p>
+          <ul className="space-y-0.5">
+            {doc.pages.map((page) => (
+              <li key={page.id}>
+                <button
+                  onClick={() => onSelectPage(page.id)}
+                  className={`w-full text-left px-2 py-2 rounded-md text-sm transition-colors ${
+                    page.id === activePageId ? activeClass : hoverClass
+                  }`}
+                >
+                  {page.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
+
+      {/* Spacer when no nav */}
+      {doc.pages.length <= 1 && <div className="flex-1" />}
+
+      {/* Bottom branding */}
+      <div className={`px-4 py-4 border-t ${dividerClass}`}>
+        <p className={`text-xs ${subTextClass}`}>Powered by</p>
+        <p className={`text-xs font-medium ${textClass}`}>The Product Bus</p>
+      </div>
+    </aside>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function PublicProposalView({ proposal, business }: Props) {
@@ -233,6 +321,12 @@ export function PublicProposalView({ proposal, business }: Props) {
   const isAcceptable = ["SENT", "VIEWED"].includes(proposal.status) && !accepted;
   const isExpired    = proposal.status === "EXPIRED";
   const expiry       = expiryDisplay(proposal.expiresAt, proposal.status);
+
+  // Show sidebar if there are multiple pages, a logo, or a custom background colour
+  const showSidebar =
+    doc.pages.length > 1 ||
+    !!doc.sidebar?.logoUrl ||
+    !!doc.sidebar?.backgroundColor;
 
   // Client toggles an optional line item in a pricing block
   const handleClientIncludedChange = useCallback(
@@ -282,10 +376,171 @@ export function PublicProposalView({ proposal, business }: Props) {
   const activePage: ProposalPage =
     doc.pages.find((p) => p.id === activePageId) ?? doc.pages[0];
 
+  // ─── Block renderer ──────────────────────────────────────────────────────────
+
+  const renderBlock = (block: ProposalPage["blocks"][number]) => {
+    if (block.type === "richText") {
+      return (
+        <RichTextBlockReadOnly
+          key={block.id}
+          content={block.content}
+          backgroundColor={block.backgroundColor}
+        />
+      );
+    }
+
+    if (block.type === "pricing") {
+      const pricingBlock = block as PricingBlock;
+      return (
+        <PricingBlockEditor
+          key={block.id}
+          block={pricingBlock}
+          onChange={() => {}}
+          readOnly={false}
+          clientView={true}
+          onClientIncludedChange={
+            isAcceptable
+              ? (itemId, included) =>
+                  handleClientIncludedChange(block.id, itemId, included)
+              : undefined
+          }
+          backgroundColor={block.backgroundColor}
+        />
+      );
+    }
+
+    if (block.type === "signature") {
+      return (
+        <SignatureSection
+          key={block.id}
+          proposalId={proposal.id}
+          clientEmail={proposal.clientEmail}
+          isAcceptable={isAcceptable}
+          isExpired={isExpired}
+          accepted={accepted}
+          onAccepted={handleAccept}
+          message={block.message}
+        />
+      );
+    }
+
+    if (block.type === "columns") {
+      return (
+        <ColumnBlockReadOnly
+          key={block.id}
+          block={block as ColumnBlock}
+          backgroundColor={block.backgroundColor}
+        />
+      );
+    }
+
+    return null;
+  };
+
+  // ─── Status banners ──────────────────────────────────────────────────────────
+
+  const statusBanners = (
+    <>
+      {accepted && (
+        <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-lg">
+          <CheckCircle size={18} className="text-green-600 shrink-0" />
+          <p className="text-sm text-green-700 font-medium">
+            This proposal has been accepted. A confirmation has been sent to{" "}
+            {proposal.clientEmail}.
+          </p>
+        </div>
+      )}
+      {isExpired && (
+        <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
+          <XCircle size={18} className="text-red-500 shrink-0" />
+          <p className="text-sm text-red-600 font-medium">
+            This proposal has expired and is no longer available for acceptance.
+          </p>
+        </div>
+      )}
+      {proposal.status === "DECLINED" && (
+        <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg">
+          <XCircle size={18} className="text-gray-400 shrink-0" />
+          <p className="text-sm text-gray-500">
+            This proposal has been declined.
+          </p>
+        </div>
+      )}
+    </>
+  );
+
+  // ─── Render: sidebar layout vs centred layout ─────────────────────────────
+
+  if (showSidebar) {
+    return (
+      <div className="flex min-h-screen bg-gray-50">
+        <ProposalSidebar
+          doc={doc}
+          activePageId={activePageId}
+          onSelectPage={setActivePageId}
+        />
+
+        {/* Main content */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-2xl mx-auto px-8 py-10">
+            {/* Proposal header */}
+            <div className="mb-8">
+              {business.businessName && (
+                <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                  {business.businessName}
+                </p>
+              )}
+              {business.abn && (
+                <p className="text-xs text-gray-400 mb-4">ABN {business.abn}</p>
+              )}
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                {proposal.title}
+              </h1>
+              <div className="flex flex-wrap items-center gap-3 mt-3">
+                <p className="text-gray-500 text-sm">
+                  Prepared for{" "}
+                  <span className="font-medium text-gray-700">
+                    {proposal.clientName}
+                  </span>
+                </p>
+                {proposal.clientAbn && (
+                  <span className="text-xs text-gray-400">
+                    ABN {proposal.clientAbn}
+                  </span>
+                )}
+                {expiry && (
+                  <span
+                    className={`text-xs px-2.5 py-1 rounded-full border font-medium ${expiry.color}`}
+                  >
+                    {expiry.label}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {statusBanners}
+
+            {/* Active page blocks */}
+            <div className="space-y-4">
+              {activePage.blocks.map(renderBlock)}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between text-xs text-gray-400 pt-6 mt-8 border-t border-gray-200">
+              <span>{business.businessName || "The Product Bus"}</span>
+              {business.abn && <span>ABN {business.abn}</span>}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Centred layout (single page, no sidebar customisation)
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-3xl mx-auto px-6 py-12">
-        {/* Business header */}
+        {/* Proposal header */}
         <div className="mb-8">
           {business.businessName && (
             <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">
@@ -310,7 +565,6 @@ export function PublicProposalView({ proposal, business }: Props) {
                 ABN {proposal.clientAbn}
               </span>
             )}
-
             {expiry && (
               <span
                 className={`text-xs px-2.5 py-1 rounded-full border font-medium ${expiry.color}`}
@@ -321,110 +575,11 @@ export function PublicProposalView({ proposal, business }: Props) {
           </div>
         </div>
 
-        {/* Status banners */}
-        {accepted && (
-          <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-lg">
-            <CheckCircle size={18} className="text-green-600 shrink-0" />
-            <p className="text-sm text-green-700 font-medium">
-              This proposal has been accepted. A confirmation has been sent to{" "}
-              {proposal.clientEmail}.
-            </p>
-          </div>
-        )}
-        {isExpired && (
-          <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
-            <XCircle size={18} className="text-red-500 shrink-0" />
-            <p className="text-sm text-red-600 font-medium">
-              This proposal has expired and is no longer available for
-              acceptance.
-            </p>
-          </div>
-        )}
-        {proposal.status === "DECLINED" && (
-          <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg">
-            <XCircle size={18} className="text-gray-400 shrink-0" />
-            <p className="text-sm text-gray-500">
-              This proposal has been declined.
-            </p>
-          </div>
-        )}
-
-        {/* Page tabs (only shown when there are multiple pages) */}
-        {doc.pages.length > 1 && (
-          <div className="flex gap-1 mb-6 border-b border-gray-200">
-            {doc.pages.map((page) => (
-              <button
-                key={page.id}
-                onClick={() => setActivePageId(page.id)}
-                className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                  page.id === activePageId
-                    ? "border-blue-600 text-blue-700"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                }`}
-              >
-                {page.name}
-              </button>
-            ))}
-          </div>
-        )}
+        {statusBanners}
 
         {/* Active page blocks */}
         <div className="space-y-4">
-          {activePage.blocks.map((block) => {
-            if (block.type === "richText") {
-              return (
-                <RichTextBlockReadOnly
-                  key={block.id}
-                  content={block.content}
-                />
-              );
-            }
-
-            if (block.type === "pricing") {
-              const pricingBlock = block as PricingBlock;
-              return (
-                <PricingBlockEditor
-                  key={block.id}
-                  block={pricingBlock}
-                  onChange={() => {}}
-                  readOnly={false}
-                  clientView={true}
-                  onClientIncludedChange={
-                    isAcceptable
-                      ? (itemId, included) =>
-                          handleClientIncludedChange(block.id, itemId, included)
-                      : undefined
-                  }
-                />
-              );
-            }
-
-            if (block.type === "signature") {
-              return (
-                <SignatureSection
-                  key={block.id}
-                  proposalId={proposal.id}
-                  clientEmail={proposal.clientEmail}
-                  isAcceptable={isAcceptable}
-                  isExpired={isExpired}
-                  accepted={accepted}
-                  onAccepted={handleAccept}
-                  message={block.message}
-                />
-              );
-            }
-
-            if (block.type === "columns") {
-              return (
-                <ColumnBlockReadOnly
-                  key={block.id}
-                  block={block as ColumnBlock}
-                />
-              );
-            }
-
-            return null;
-          })}
+          {activePage.blocks.map(renderBlock)}
         </div>
 
         {/* Footer */}

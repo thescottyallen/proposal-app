@@ -19,6 +19,7 @@ export interface RichTextBlock {
   type: "richText";
   id: string;
   content: Record<string, unknown>; // TipTap JSON doc
+  backgroundColor?: string;
 }
 
 export interface PricingBlock {
@@ -26,12 +27,14 @@ export interface PricingBlock {
   id: string;
   pricingData: ProposalPricingData;
   pricingSettings: ProposalPricingSettings;
+  backgroundColor?: string;
 }
 
 export interface SignatureBlock {
   type: "signature";
   id: string;
   message?: string; // Custom acceptance message shown to the client
+  backgroundColor?: string;
 }
 
 // ─── Column / layout block ─────────────────────────────────────────────────────
@@ -60,6 +63,16 @@ export interface ColumnBlock {
   showBorders: boolean;
   /** Each row is an array of cells with length === columnCount */
   rows: ColumnCell[][];
+  backgroundColor?: string;
+}
+
+// ─── Sidebar settings ─────────────────────────────────────────────────────────
+
+export interface SidebarSettings {
+  /** Base64 data URL or public URL for the logo shown at the top of the sidebar */
+  logoUrl?: string;
+  /** CSS colour value for the sidebar background, e.g. "#1e293b" */
+  backgroundColor?: string;
 }
 
 export type ProposalBlock = RichTextBlock | PricingBlock | SignatureBlock | ColumnBlock;
@@ -77,6 +90,8 @@ export interface ProposalPage {
 export interface ProposalDocument {
   version: 2;
   pages: ProposalPage[];
+  /** Optional sidebar branding — logo + background colour */
+  sidebar?: SidebarSettings;
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────

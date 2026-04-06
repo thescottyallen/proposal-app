@@ -20,6 +20,7 @@ interface PricingBlockEditorProps {
   clientView?: boolean;
   gstRegistered?: boolean;
   onClientIncludedChange?: (itemId: string, included: boolean) => void;
+  backgroundColor?: string;
 }
 
 export function PricingBlockEditor({
@@ -29,6 +30,7 @@ export function PricingBlockEditor({
   clientView = false,
   gstRegistered = false,
   onClientIncludedChange,
+  backgroundColor,
 }: PricingBlockEditorProps) {
   const [fetchingRate, setFetchingRate] = useState(false);
 
@@ -62,7 +64,10 @@ export function PricingBlockEditor({
   }, [block.pricingData, block.pricingSettings, onChange]);
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+    <div
+      className="rounded-lg border border-gray-200 shadow-sm"
+      style={{ backgroundColor: backgroundColor || "#ffffff" }}
+    >
       <div className="px-6 py-5">
         {clientView &&
           block.pricingData.items.some((i) => i.isOptional) && (

@@ -319,6 +319,7 @@ interface ColumnBlockEditorProps {
   block: ColumnBlockType;
   onChange: (block: ColumnBlockType) => void;
   readOnly?: boolean;
+  backgroundColor?: string;
 }
 
 function makeTextCell(): ColumnCell {
@@ -352,6 +353,7 @@ export function ColumnBlockEditor({
   block,
   onChange,
   readOnly = false,
+  backgroundColor,
 }: ColumnBlockEditorProps) {
   // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -450,7 +452,10 @@ export function ColumnBlockEditor({
   // ─── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+    <div
+      className="rounded-lg border border-gray-200 shadow-sm"
+      style={{ backgroundColor: backgroundColor || "#ffffff" }}
+    >
       {/* Toolbar */}
       {!readOnly && (
         <div className="flex items-center gap-1.5 px-4 py-2 border-b border-gray-100 bg-gray-50 rounded-t-lg flex-wrap">
@@ -617,12 +622,21 @@ export function ColumnBlockEditor({
 
 // ─── Read-only version for public view ────────────────────────────────────────
 
-export function ColumnBlockReadOnly({ block }: { block: ColumnBlockType }) {
+export function ColumnBlockReadOnly({
+  block,
+  backgroundColor,
+}: {
+  block: ColumnBlockType;
+  backgroundColor?: string;
+}) {
   const gridCols = block.columnCount === 3 ? "grid-cols-3" : "grid-cols-2";
   const cellBorder = block.showBorders ? "border border-gray-200" : "";
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-3">
+    <div
+      className="rounded-lg border border-gray-200 shadow-sm p-3"
+      style={{ backgroundColor: backgroundColor || "#ffffff" }}
+    >
       <div className="space-y-0">
         {block.rows.map((row, rowIdx) => (
           <div key={rowIdx}>
