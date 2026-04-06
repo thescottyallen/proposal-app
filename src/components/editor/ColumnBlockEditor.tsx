@@ -7,7 +7,7 @@ import TipTapImage from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
 import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
-import { Columns2, Grid3X3, ImageIcon, Plus, Trash2, Type, Upload, X } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Columns2, Grid3X3, ImageIcon, Plus, Trash2, Type, Upload, X } from "lucide-react";
 import type { ColumnBlock as ColumnBlockType, ColumnCell } from "@/lib/proposal-document";
 import { newId } from "@/lib/proposal-document";
 
@@ -17,6 +17,8 @@ const CELL_PROSE =
   "prose prose-sm max-w-none focus:outline-none min-h-[80px]" +
   " [&_.tiptap]:outline-none" +
   " [&_.tiptap_p]:mb-2 [&_.tiptap_p]:leading-relaxed" +
+  // TipTap TextAlign writes inline style="text-align:…" directly on nodes,
+  // which takes priority over prose defaults — no extra classes needed.
   " [&_.tiptap_.is-editor-empty:first-child::before]:text-gray-400" +
   " [&_.tiptap_.is-editor-empty:first-child::before]:content-[attr(data-placeholder)]" +
   " [&_.tiptap_.is-editor-empty:first-child::before]:float-left" +
@@ -129,6 +131,49 @@ function TextCell({ cell, onUpdate, readOnly }: TextCellProps) {
             <option value="2">H2</option>
             <option value="3">H3</option>
           </select>
+          <div className="w-px h-3 bg-gray-200 mx-0.5" />
+          <button
+            onMouseDown={(e) => {
+              e.preventDefault();
+              editor?.chain().focus().setTextAlign("left").run();
+            }}
+            className={`p-0.5 rounded transition-colors ${
+              editor?.isActive({ textAlign: "left" }) || !editor?.isActive({ textAlign: "center" }) && !editor?.isActive({ textAlign: "right" })
+                ? "bg-blue-100 text-blue-700"
+                : "text-gray-500 hover:bg-gray-100"
+            }`}
+            title="Align left"
+          >
+            <AlignLeft size={11} />
+          </button>
+          <button
+            onMouseDown={(e) => {
+              e.preventDefault();
+              editor?.chain().focus().setTextAlign("center").run();
+            }}
+            className={`p-0.5 rounded transition-colors ${
+              editor?.isActive({ textAlign: "center" })
+                ? "bg-blue-100 text-blue-700"
+                : "text-gray-500 hover:bg-gray-100"
+            }`}
+            title="Align center"
+          >
+            <AlignCenter size={11} />
+          </button>
+          <button
+            onMouseDown={(e) => {
+              e.preventDefault();
+              editor?.chain().focus().setTextAlign("right").run();
+            }}
+            className={`p-0.5 rounded transition-colors ${
+              editor?.isActive({ textAlign: "right" })
+                ? "bg-blue-100 text-blue-700"
+                : "text-gray-500 hover:bg-gray-100"
+            }`}
+            title="Align right"
+          >
+            <AlignRight size={11} />
+          </button>
         </div>
       )}
 
