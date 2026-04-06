@@ -17,6 +17,12 @@ import { newId } from "@/lib/proposal-document";
 const CELL_PROSE =
   "prose prose-sm max-w-none focus:outline-none min-h-[80px]" +
   " [&_.tiptap]:outline-none" +
+  // Explicit heading overrides — Tailwind's preflight resets heading sizes and
+  // the prose plugin's :where() selectors have zero specificity, so they lose.
+  // These mirror the pattern used in RichTextBlock but sized for compact cells.
+  " [&_.tiptap_h1]:text-2xl [&_.tiptap_h1]:font-bold [&_.tiptap_h1]:mb-3 [&_.tiptap_h1]:mt-4 [&_.tiptap_h1]:leading-tight" +
+  " [&_.tiptap_h2]:text-xl [&_.tiptap_h2]:font-semibold [&_.tiptap_h2]:mb-2 [&_.tiptap_h2]:mt-3 [&_.tiptap_h2]:leading-tight" +
+  " [&_.tiptap_h3]:text-lg [&_.tiptap_h3]:font-semibold [&_.tiptap_h3]:mb-2 [&_.tiptap_h3]:mt-2 [&_.tiptap_h3]:leading-snug" +
   " [&_.tiptap_p]:mb-2 [&_.tiptap_p]:leading-relaxed" +
   // TipTap TextAlign writes inline style="text-align:…" directly on nodes,
   // which takes priority over prose defaults — no extra classes needed.
