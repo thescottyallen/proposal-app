@@ -1,11 +1,12 @@
 "use client";
 
-import { DollarSign, FileText, PenLine, X } from "lucide-react";
+import { Columns2, DollarSign, FileText, PenLine, X } from "lucide-react";
 
 interface AddBlockMenuProps {
   onAddRichText: () => void;
   onAddPricing: () => void;
   onAddSignature: () => void;
+  onAddColumns: () => void;
   onClose: () => void;
   acceptanceBlockExists?: boolean;
 }
@@ -14,6 +15,7 @@ export function AddBlockMenu({
   onAddRichText,
   onAddPricing,
   onAddSignature,
+  onAddColumns,
   onClose,
   acceptanceBlockExists = false,
 }: AddBlockMenuProps) {
@@ -52,6 +54,22 @@ export function AddBlockMenu({
 
         <button
           onClick={() => {
+            onAddColumns();
+            onClose();
+          }}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 text-left transition-colors"
+        >
+          <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center shrink-0">
+            <Columns2 size={15} className="text-orange-600" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-gray-900">Columns</p>
+            <p className="text-xs text-gray-500">2–3 column layout with text or images</p>
+          </div>
+        </button>
+
+        <button
+          onClick={() => {
             onAddPricing();
             onClose();
           }}
@@ -74,7 +92,11 @@ export function AddBlockMenu({
           }}
           disabled={acceptanceBlockExists}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:bg-gray-50"
-          title={acceptanceBlockExists ? "Only one Acceptance block is allowed per proposal" : undefined}
+          title={
+            acceptanceBlockExists
+              ? "Only one Acceptance block is allowed per proposal"
+              : undefined
+          }
         >
           <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center shrink-0">
             <PenLine size={15} className="text-purple-600" />

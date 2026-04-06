@@ -34,7 +34,30 @@ export interface SignatureBlock {
   message?: string; // Custom acceptance message shown to the client
 }
 
-export type ProposalBlock = RichTextBlock | PricingBlock | SignatureBlock;
+// ─── Column / layout block ─────────────────────────────────────────────────────
+
+export interface ColumnCell {
+  id: string;
+  type: "text" | "image";
+  /** TipTap JSON doc — used when type === "text" */
+  content: Record<string, unknown>;
+  /** Public URL or base64 data URL — used when type === "image" */
+  imageUrl: string;
+  imageAlt: string;
+}
+
+export interface ColumnBlock {
+  type: "columns";
+  id: string;
+  /** Number of columns (2 or 3) */
+  columnCount: 2 | 3;
+  /** Show grid borders around cells */
+  showBorders: boolean;
+  /** Each row is an array of cells with length === columnCount */
+  rows: ColumnCell[][];
+}
+
+export type ProposalBlock = RichTextBlock | PricingBlock | SignatureBlock | ColumnBlock;
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 

@@ -6,11 +6,13 @@ import { PageSidebar } from "./PageSidebar";
 import { RichTextBlock } from "./RichTextBlock";
 import { PricingBlockEditor } from "./PricingBlockEditor";
 import { SignatureBlockEditor, DEFAULT_ACCEPTANCE_MESSAGE } from "./SignatureBlockEditor";
+import { ColumnBlockEditor } from "./ColumnBlockEditor";
 import { AddBlockMenu } from "./AddBlockMenu";
 import {
   ProposalDocument,
   ProposalPage,
   ProposalBlock,
+  ColumnBlock,
   newId,
 } from "@/lib/proposal-document";
 import {
@@ -111,7 +113,7 @@ export function ProposalEditor({
   const addBlock = (
     pageId: string,
     afterBlockId: string,
-    type: "richText" | "pricing" | "signature"
+    type: "richText" | "pricing" | "signature" | "columns"
   ) => {
     let newBlock: ProposalBlock;
     if (type === "richText") {
@@ -127,6 +129,21 @@ export function ProposalEditor({
         pricingData: defaultPricingData(),
         pricingSettings: defaultPricingSettings(),
       };
+    } else if (type === "columns") {
+      const makeCell = () => ({
+        id: newId(),
+        type: "text" as const,
+        content: { type: "doc", content: [{ type: "paragraph" }] },
+        imageUrl: "",
+        imageAlt: "",
+      });
+      newBlock = {
+        type: "columns",
+        id: newId(),
+        columnCount: 2,
+        showBorders: false,
+        rows: [[makeCell(), makeCell()]],
+      } as ColumnBlock;
     } else {
       newBlock = { type: "signature", id: newId(), message: DEFAULT_ACCEPTANCE_MESSAGE };
     }
@@ -202,6 +219,14 @@ export function ProposalEditor({
                   />
                 )}
 
+                {block.type === "columns" && (
+                  <ColumnBlockEditor
+                    block={block}
+                    onChange={(updated) => updateBlock(activePage.id, updated)}
+                    readOnly={readOnly}
+                  />
+                )}
+
                 {/* Delete button */}
                 {!readOnly && activePage.blocks.length > 1 && (
                   <button
@@ -239,6 +264,9 @@ export function ProposalEditor({
                         }
                         onAddSignature={() =>
                           addBlock(activePage.id, block.id, "signature")
+                        }
+                        onAddColumns={() =>
+                          addBlock(activePage.id, block.id, "columns")
                         }
                         onClose={() => setAddMenuAfterBlockId(null)}
                         acceptanceBlockExists={doc.pages.some((p) =>

@@ -4,10 +4,12 @@ import { useState, useCallback } from "react";
 import { CheckCircle, XCircle } from "lucide-react";
 import { RichTextBlockReadOnly } from "@/components/editor/RichTextBlock";
 import { PricingBlockEditor } from "@/components/editor/PricingBlockEditor";
+import { ColumnBlockReadOnly } from "@/components/editor/ColumnBlockEditor";
 import {
   ProposalDocument,
   ProposalPage,
   PricingBlock,
+  ColumnBlock,
   migrateToDocument,
   isProposalDocument,
   stripDocumentInternalFields,
@@ -408,6 +410,15 @@ export function PublicProposalView({ proposal, business }: Props) {
                   accepted={accepted}
                   onAccepted={handleAccept}
                   message={block.message}
+                />
+              );
+            }
+
+            if (block.type === "columns") {
+              return (
+                <ColumnBlockReadOnly
+                  key={block.id}
+                  block={block as ColumnBlock}
                 />
               );
             }
