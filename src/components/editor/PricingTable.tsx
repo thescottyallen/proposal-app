@@ -302,19 +302,29 @@ function ItemRow({
             </div>
           ) : (
             <div className="space-y-1">
-              <input
-                type="text"
+              <textarea
                 value={item.description}
                 onChange={e => onUpdate(item.id, { description: e.target.value })}
+                onInput={e => {
+                  const t = e.currentTarget;
+                  t.style.height = "auto";
+                  t.style.height = t.scrollHeight + "px";
+                }}
                 placeholder="Description..."
-                className="w-full text-sm border-0 bg-transparent focus:outline-none focus:ring-0 p-0 text-gray-900 placeholder-gray-300"
+                rows={1}
+                className="w-full text-sm border-0 bg-transparent focus:outline-none focus:ring-0 p-0 text-gray-900 placeholder-gray-300 resize-none overflow-hidden leading-relaxed"
               />
-              <input
-                type="text"
+              <textarea
                 value={item.scopeNote}
                 onChange={e => onUpdate(item.id, { scopeNote: e.target.value })}
+                onInput={e => {
+                  const t = e.currentTarget;
+                  t.style.height = "auto";
+                  t.style.height = t.scrollHeight + "px";
+                }}
                 placeholder="Scope note (visible to client)..."
-                className="w-full text-xs border-0 bg-transparent focus:outline-none focus:ring-0 p-0 text-gray-500 placeholder-gray-300 italic"
+                rows={1}
+                className="w-full text-xs border-0 bg-transparent focus:outline-none focus:ring-0 p-0 text-gray-500 placeholder-gray-300 italic resize-none overflow-hidden leading-relaxed"
               />
             </div>
           )}
