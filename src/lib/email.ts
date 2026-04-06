@@ -78,29 +78,40 @@ export async function sendOpenNotification({
 // ─── Acceptance confirmation to client ───────────────────────────────────────
 
 interface AcceptanceClientParams {
-  to:            string;
-  clientName:    string;
-  proposalTitle: string;
-  signerName:    string;
-  businessName:  string;
-  publicUrl:     string;
+  to:              string;
+  clientName:      string;
+  proposalTitle:   string;
+  signerName:      string;
+  businessName:    string;
+  publicUrl:       string;
+  customSubject?:  string;
+  customMessage?:  string;
 }
 
 export async function sendAcceptanceConfirmationToClient({
   to, clientName, proposalTitle, signerName, businessName, publicUrl,
+  customSubject, customMessage,
 }: AcceptanceClientParams) {
+  const subject = customSubject
+    ? customSubject.replace("{title}", proposalTitle)
+    : `You accepted: ${proposalTitle}`;
+
+  const bodyParagraph = customMessage
+    ? `<p style="font-size:15px;line-height:1.6;color:#374151;margin:0 0 24px 0;">${customMessage.replace(/\n/g, "<br/>").replace("{title}", proposalTitle).replace("{business}", businessName)}</p>`
+    : `<p style="font-size:15px;line-height:1.6;color:#374151;margin:0 0 24px 0;">
+        This confirms your acceptance of <strong>${proposalTitle}</strong> from ${businessName}.
+        Your electronic signature has been recorded with a timestamp.
+      </p>`;
+
   const { error } = await resend.emails.send({
     from:    FROM,
     to:      [to],
-    subject: `You accepted: ${proposalTitle}`,
+    subject,
     html: emailWrapper(`
       <h1 style="margin:0;font-size:20px;font-weight:600;color:#ffffff;">Proposal Accepted</h1>
     `, `
       <p style="font-size:15px;line-height:1.6;color:#374151;margin:0 0 16px 0;">Hi ${clientName || signerName},</p>
-      <p style="font-size:15px;line-height:1.6;color:#374151;margin:0 0 24px 0;">
-        This confirms your acceptance of <strong>${proposalTitle}</strong> from ${businessName}.
-        Your electronic signature has been recorded with a timestamp.
-      </p>
+      ${bodyParagraph}
       <p style="font-size:15px;line-height:1.6;color:#374151;margin:0 0 32px 0;">
         You can view the accepted proposal at any time using the link below.
       </p>

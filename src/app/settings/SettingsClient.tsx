@@ -16,6 +16,8 @@ interface Settings {
   invoiceSeq:               number;
   roundingMode:             "DOLLAR" | "CENTS";
   defaultAcceptanceMessage: string | null;
+  acceptanceEmailSubject:   string | null;
+  acceptanceEmailMessage:   string | null;
 }
 
 export function SettingsClient() {
@@ -40,6 +42,8 @@ export function SettingsClient() {
   const [invoicePrefix,            setInvoicePrefix]            = useState("INV");
   const [roundingMode,             setRoundingMode]             = useState<"DOLLAR" | "CENTS">("CENTS");
   const [defaultAcceptanceMessage, setDefaultAcceptanceMessage] = useState("");
+  const [acceptanceEmailSubject,   setAcceptanceEmailSubject]   = useState("");
+  const [acceptanceEmailMessage,   setAcceptanceEmailMessage]   = useState("");
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -58,6 +62,8 @@ export function SettingsClient() {
         setInvoicePrefix(data.invoicePrefix);
         setRoundingMode(data.roundingMode);
         setDefaultAcceptanceMessage(data.defaultAcceptanceMessage ?? "");
+        setAcceptanceEmailSubject(data.acceptanceEmailSubject ?? "");
+        setAcceptanceEmailMessage(data.acceptanceEmailMessage ?? "");
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -77,6 +83,8 @@ export function SettingsClient() {
           invoicePrefix:            invoicePrefix.trim() || "INV",
           roundingMode,
           defaultAcceptanceMessage: defaultAcceptanceMessage.trim() || null,
+          acceptanceEmailSubject:   acceptanceEmailSubject.trim() || null,
+          acceptanceEmailMessage:   acceptanceEmailMessage.trim() || null,
         }),
       });
       if (res.ok) {
@@ -87,12 +95,6 @@ export function SettingsClient() {
     } finally {
       setSaving(false);
     }
-  };
-
-  const exampleInvoice = () => {
-    const seq = (settings?.invoiceSeq ?? 0) + 1;
-    const year = new Date().getFullYear();
-    return `${invoicePrefix.trim() || "INV"}-${year}-${String(seq).padStart(3, "0")}`;
   };
 
   if (loading) {
@@ -211,28 +213,35 @@ export function SettingsClient() {
           />
         </section>
 
-        {/* Invoice numbering */}
+        {/* Acceptance email */}
         <section className="bg-white rounded-lg border border-gray-200 p-5 mb-8">
-          <h2 className="text-sm font-semibold text-gray-700 mb-1">Invoice Numbering</h2>
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Acceptance Email</h2>
           <p className="text-xs text-gray-400 mb-4">
-            Invoice numbers are assigned automatically when a proposal is sent. The format is{" "}
-            <code className="text-xs bg-gray-100 px-1 rounded">PREFIX-YEAR-SEQ</code>.
+            Customise the confirmation email sent to your client when they accept a proposal.
+            Use <code className="bg-gray-100 px-1 rounded">{"{title}"}</code> for the proposal title and{" "}
+            <code className="bg-gray-100 px-1 rounded">{"{business}"}</code> for your business name.
+            Leave blank to use the default wording.
           </p>
           <div className="space-y-4">
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Prefix</label>
+              <label className="block text-xs text-gray-500 mb-1">Subject line</label>
               <input
                 type="text"
-                value={invoicePrefix}
-                onChange={e => setInvoicePrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ""))}
-                placeholder="INV"
-                maxLength={10}
+                value={acceptanceEmailSubject}
+                onChange={e => setAcceptanceEmailSubject(e.target.value)}
+                placeholder={`You accepted: {title}`}
                 className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            <div className="text-xs text-gray-500">
-              Next invoice number:{" "}
-              <span className="font-mono font-medium text-gray-800">{exampleInvoice()}</span>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Email body</label>
+              <textarea
+                value={acceptanceEmailMessage}
+                onChange={e => setAcceptanceEmailMessage(e.target.value)}
+                rows={5}
+                placeholder={`This confirms your acceptance of {title} from {business}. Your electronic signature has been recorded with a timestamp.`}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              />
             </div>
           </div>
         </section>

@@ -42,7 +42,13 @@ function ToolbarButton({ onClick, isActive, children, title }: ToolbarButtonProp
   return (
     <button
       type="button"
-      onClick={onClick}
+      // Use onMouseDown + preventDefault so the editor never loses focus when
+      // a toolbar button is pressed. This is the standard TipTap pattern and
+      // fixes commands (like toggleHeading) that fail if focus is lost first.
+      onMouseDown={(e) => {
+        e.preventDefault();
+        onClick();
+      }}
       title={title}
       className={cn(
         "p-2 rounded-md hover:bg-gray-100 transition-colors",

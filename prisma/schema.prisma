@@ -59,8 +59,10 @@ model BusinessSettings {
   invoicePrefix   String      @default("INV") @map("invoice_prefix")
   invoiceSeq      Int         @default(0) @map("invoice_seq") // incremented atomically on send
   roundingMode             RoundingMode @default(CENTS) @map("rounding_mode")
-  defaultAcceptanceMessage String?      @map("default_acceptance_message")
-  createdAt                DateTime     @default(now()) @map("created_at")
+  defaultAcceptanceMessage  String?      @map("default_acceptance_message")
+  acceptanceEmailSubject    String?      @map("acceptance_email_subject")
+  acceptanceEmailMessage    String?      @map("acceptance_email_message")
+  createdAt                 DateTime     @default(now()) @map("created_at")
   updatedAt                DateTime     @updatedAt @map("updated_at")
 
   @@map("business_settings")

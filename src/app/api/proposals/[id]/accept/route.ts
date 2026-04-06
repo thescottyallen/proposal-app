@@ -123,13 +123,21 @@ export async function POST(
     });
     const businessName = bizSettings?.businessName || "The Product Bus";
 
+    // Cast to access new fields before the next `prisma generate` run
+    const biz = bizSettings as typeof bizSettings & {
+      acceptanceEmailSubject?: string | null;
+      acceptanceEmailMessage?: string | null;
+    };
+
     await sendAcceptanceConfirmationToClient({
-      to:            proposal.clientEmail,
-      clientName:    proposal.clientName,
-      proposalTitle: proposal.title,
+      to:             proposal.clientEmail,
+      clientName:     proposal.clientName,
+      proposalTitle:  proposal.title,
       signerName,
       businessName,
       publicUrl,
+      customSubject:  biz?.acceptanceEmailSubject ?? undefined,
+      customMessage:  biz?.acceptanceEmailMessage ?? undefined,
     });
 
     if (ownerEmail) {
