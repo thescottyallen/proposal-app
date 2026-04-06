@@ -3,6 +3,7 @@
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
+import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
@@ -22,11 +23,47 @@ const PROSE =
   " [&_.tiptap_hr]:my-6 [&_.tiptap_hr]:border-gray-200" +
   " [&_.tiptap_ul]:list-disc [&_.tiptap_ul]:pl-6" +
   " [&_.tiptap_ol]:list-decimal [&_.tiptap_ol]:pl-6" +
+  " [&_.tiptap_a]:text-blue-600 [&_.tiptap_a]:underline [&_.tiptap_a]:cursor-pointer" +
   " [&_.tiptap_.is-editor-empty:first-child::before]:text-gray-400" +
   " [&_.tiptap_.is-editor-empty:first-child::before]:content-[attr(data-placeholder)]" +
   " [&_.tiptap_.is-editor-empty:first-child::before]:float-left" +
   " [&_.tiptap_.is-editor-empty:first-child::before]:h-0" +
   " [&_.tiptap_.is-editor-empty:first-child::before]:pointer-events-none";
+
+/**
+ * Custom Image extension that supports an optional `href` attribute.
+ * When `href` is set the image is wrapped in an anchor tag on render.
+ */
+const LinkedImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      href: {
+        default: null,
+        parseHTML: (element) => {
+          // If the image is wrapped in an <a>, grab its href
+          const parent = element.parentElement;
+          return parent?.tagName === "A" ? parent.getAttribute("href") : null;
+        },
+        renderHTML: () => {
+          // Handled in renderHTML below
+          return {};
+        },
+      },
+    };
+  },
+  renderHTML({ HTMLAttributes }) {
+    const { href, src, alt, title, width, height, style } = HTMLAttributes;
+    const imgAttrs: Record<string, unknown> = { src, alt, title, width, height, style };
+    // Strip undefined keys
+    Object.keys(imgAttrs).forEach((k) => imgAttrs[k] === undefined && delete imgAttrs[k]);
+
+    if (href) {
+      return ["a", { href, target: "_blank", rel: "noopener noreferrer" }, ["img", imgAttrs]];
+    }
+    return ["img", imgAttrs];
+  },
+});
 
 interface RichTextBlockProps {
   block: RichTextBlockType;
@@ -46,7 +83,15 @@ export function RichTextBlock({
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
-      Image.configure({ inline: false, allowBase64: true }),
+      LinkedImage.configure({ inline: false, allowBase64: true }),
+      Link.configure({
+        openOnClick: false,   // Don't follow links while editing
+        autolink: true,
+        HTMLAttributes: {
+          rel: "noopener noreferrer",
+          target: "_blank",
+        },
+      }),
       Placeholder.configure({ placeholder: "Start writing..." }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       Underline,
@@ -102,7 +147,14 @@ export function RichTextBlockReadOnly({
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
-      Image.configure({ inline: false }),
+      LinkedImage.configure({ inline: false }),
+      Link.configure({
+        openOnClick: true,
+        HTMLAttributes: {
+          rel: "noopener noreferrer",
+          target: "_blank",
+        },
+      }),
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       Underline,
     ],

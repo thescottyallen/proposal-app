@@ -66,6 +66,22 @@ export interface ColumnBlock {
   backgroundColor?: string;
 }
 
+// ─── Button / navigation block ────────────────────────────────────────────────
+
+export interface ButtonBlock {
+  type: "button";
+  id: string;
+  /** Label displayed on the button */
+  label: string;
+  /** Page ID to navigate to, or an external URL (starts with http) */
+  targetPageId: string;
+  /** Visual style */
+  style?: "primary" | "secondary" | "outline";
+  /** Horizontal alignment */
+  alignment?: "left" | "center" | "right";
+  backgroundColor?: string;
+}
+
 // ─── Sidebar settings ─────────────────────────────────────────────────────────
 
 export interface SidebarSettings {
@@ -75,7 +91,7 @@ export interface SidebarSettings {
   backgroundColor?: string;
 }
 
-export type ProposalBlock = RichTextBlock | PricingBlock | SignatureBlock | ColumnBlock;
+export type ProposalBlock = RichTextBlock | PricingBlock | SignatureBlock | ColumnBlock | ButtonBlock;
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 

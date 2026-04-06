@@ -1,12 +1,13 @@
 "use client";
 
-import { Columns2, DollarSign, FileText, PenLine, X } from "lucide-react";
+import { Columns2, DollarSign, FileText, MousePointerClick, PenLine, X } from "lucide-react";
 
 interface AddBlockMenuProps {
   onAddRichText: () => void;
   onAddPricing: () => void;
   onAddSignature: () => void;
   onAddColumns: () => void;
+  onAddButton: () => void;
   onClose: () => void;
   acceptanceBlockExists?: boolean;
 }
@@ -16,6 +17,7 @@ export function AddBlockMenu({
   onAddPricing,
   onAddSignature,
   onAddColumns,
+  onAddButton,
   onClose,
   acceptanceBlockExists = false,
 }: AddBlockMenuProps) {
@@ -81,6 +83,22 @@ export function AddBlockMenu({
           <div>
             <p className="text-sm font-medium text-gray-900">Pricing table</p>
             <p className="text-xs text-gray-500">Line items, totals, GST</p>
+          </div>
+        </button>
+
+        <button
+          onClick={() => {
+            onAddButton();
+            onClose();
+          }}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 text-left transition-colors"
+        >
+          <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0">
+            <MousePointerClick size={15} className="text-indigo-600" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-gray-900">Button</p>
+            <p className="text-xs text-gray-500">Navigate to another page or URL</p>
           </div>
         </button>
 

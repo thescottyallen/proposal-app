@@ -29,26 +29,29 @@ export async function PUT(request: NextRequest) {
     defaultCurrency,
     invoicePrefix,
     roundingMode,
+    defaultAcceptanceMessage,
   } = body;
 
   const settings = await prisma.businessSettings.upsert({
     where:  { userId },
     create: {
       userId,
-      ...(businessName    !== undefined && { businessName }),
-      ...(abn             !== undefined && { abn }),
-      ...(gstRegistered   !== undefined && { gstRegistered }),
-      ...(defaultCurrency !== undefined && { defaultCurrency }),
-      ...(invoicePrefix   !== undefined && { invoicePrefix }),
-      ...(roundingMode    !== undefined && { roundingMode }),
+      ...(businessName              !== undefined && { businessName }),
+      ...(abn                       !== undefined && { abn }),
+      ...(gstRegistered             !== undefined && { gstRegistered }),
+      ...(defaultCurrency           !== undefined && { defaultCurrency }),
+      ...(invoicePrefix             !== undefined && { invoicePrefix }),
+      ...(roundingMode              !== undefined && { roundingMode }),
+      ...(defaultAcceptanceMessage  !== undefined && { defaultAcceptanceMessage }),
     },
     update: {
-      ...(businessName    !== undefined && { businessName }),
-      ...(abn             !== undefined && { abn }),
-      ...(gstRegistered   !== undefined && { gstRegistered }),
-      ...(defaultCurrency !== undefined && { defaultCurrency }),
-      ...(invoicePrefix   !== undefined && { invoicePrefix }),
-      ...(roundingMode    !== undefined && { roundingMode }),
+      ...(businessName              !== undefined && { businessName }),
+      ...(abn                       !== undefined && { abn }),
+      ...(gstRegistered             !== undefined && { gstRegistered }),
+      ...(defaultCurrency           !== undefined && { defaultCurrency }),
+      ...(invoicePrefix             !== undefined && { invoicePrefix }),
+      ...(roundingMode              !== undefined && { roundingMode }),
+      ...(defaultAcceptanceMessage  !== undefined && { defaultAcceptanceMessage }),
     },
   });
 

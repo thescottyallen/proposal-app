@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Plus, PencilLine, Check, X, Upload, Palette } from "lucide-react";
+import { Plus, PencilLine, Check, X, Upload, Palette, Trash2, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProposalPage, SidebarSettings } from "@/lib/proposal-document";
 
@@ -11,6 +11,8 @@ interface PageSidebarProps {
   onSelectPage: (id: string) => void;
   onAddPage: () => void;
   onRenamePage: (id: string, name: string) => void;
+  onDeletePage?: (id: string) => void;
+  onMovePage?: (id: string, direction: "up" | "down") => void;
   /** Current sidebar branding settings */
   sidebar?: SidebarSettings;
   /** When provided, editing controls (logo upload, colour picker) are shown */
@@ -23,6 +25,8 @@ export function PageSidebar({
   onSelectPage,
   onAddPage,
   onRenamePage,
+  onDeletePage,
+  onMovePage,
   sidebar,
   onUpdateSidebar,
 }: PageSidebarProps) {
@@ -207,16 +211,47 @@ export function PageSidebar({
                   </span>
                 </div>
                 {onUpdateSidebar !== undefined && (
-                  <button
-                    onClick={(e) => startEdit(page, e)}
-                    className={cn(
-                      "shrink-0 p-0.5 opacity-0 group-hover:opacity-100 transition-opacity",
-                      iconClass
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    {onMovePage && i > 0 && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onMovePage(page.id, "up"); }}
+                        className={cn("p-0.5", iconClass)}
+                        title="Move page up"
+                      >
+                        <ChevronUp size={12} />
+                      </button>
                     )}
-                    title="Rename page"
-                  >
-                    <PencilLine size={12} />
-                  </button>
+                    {onMovePage && i < pages.length - 1 && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onMovePage(page.id, "down"); }}
+                        className={cn("p-0.5", iconClass)}
+                        title="Move page down"
+                      >
+                        <ChevronDown size={12} />
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => startEdit(page, e)}
+                      className={cn("p-0.5", iconClass)}
+                      title="Rename page"
+                    >
+                      <PencilLine size={12} />
+                    </button>
+                    {onDeletePage && pages.length > 1 && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`Delete page "${page.name}"? This cannot be undone.`)) {
+                            onDeletePage(page.id);
+                          }
+                        }}
+                        className={cn("p-0.5", isDark ? "text-white/40 hover:text-red-300" : "text-gray-300 hover:text-red-500")}
+                        title="Delete page"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    )}
+                  </div>
                 )}
               </>
             )}

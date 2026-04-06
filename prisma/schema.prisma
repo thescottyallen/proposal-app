@@ -58,9 +58,10 @@ model BusinessSettings {
   defaultCurrency Currency    @default(AUD) @map("default_currency")
   invoicePrefix   String      @default("INV") @map("invoice_prefix")
   invoiceSeq      Int         @default(0) @map("invoice_seq") // incremented atomically on send
-  roundingMode    RoundingMode @default(CENTS) @map("rounding_mode")
-  createdAt       DateTime    @default(now()) @map("created_at")
-  updatedAt       DateTime    @updatedAt @map("updated_at")
+  roundingMode             RoundingMode @default(CENTS) @map("rounding_mode")
+  defaultAcceptanceMessage String?      @map("default_acceptance_message")
+  createdAt                DateTime     @default(now()) @map("created_at")
+  updatedAt                DateTime     @updatedAt @map("updated_at")
 
   @@map("business_settings")
 }

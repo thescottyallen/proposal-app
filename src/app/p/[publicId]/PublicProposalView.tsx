@@ -5,11 +5,13 @@ import { CheckCircle, XCircle } from "lucide-react";
 import { RichTextBlockReadOnly } from "@/components/editor/RichTextBlock";
 import { PricingBlockEditor } from "@/components/editor/PricingBlockEditor";
 import { ColumnBlockReadOnly } from "@/components/editor/ColumnBlockEditor";
+import { ButtonBlockView } from "@/components/editor/ButtonBlockEditor";
 import {
   ProposalDocument,
   ProposalPage,
   PricingBlock,
   ColumnBlock,
+  ButtonBlock,
   migrateToDocument,
   isProposalDocument,
   stripDocumentInternalFields,
@@ -430,6 +432,16 @@ export function PublicProposalView({ proposal, business }: Props) {
           key={block.id}
           block={block as ColumnBlock}
           backgroundColor={block.backgroundColor}
+        />
+      );
+    }
+
+    if (block.type === "button") {
+      return (
+        <ButtonBlockView
+          key={block.id}
+          block={block as ButtonBlock}
+          onNavigatePage={setActivePageId}
         />
       );
     }

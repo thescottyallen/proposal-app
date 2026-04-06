@@ -7,12 +7,14 @@ import { RichTextBlock } from "./RichTextBlock";
 import { PricingBlockEditor } from "./PricingBlockEditor";
 import { SignatureBlockEditor, DEFAULT_ACCEPTANCE_MESSAGE } from "./SignatureBlockEditor";
 import { ColumnBlockEditor } from "./ColumnBlockEditor";
+import { ButtonBlockEditor } from "./ButtonBlockEditor";
 import { AddBlockMenu } from "./AddBlockMenu";
 import { ContentBlockPicker } from "./ContentBlockPicker";
 import {
   ProposalDocument,
   ProposalPage,
   ProposalBlock,
+  ButtonBlock,
   ColumnBlock,
   SidebarSettings,
   newId,
@@ -29,6 +31,7 @@ interface ProposalEditorProps {
   onUpdate: (doc: ProposalDocument) => void;
   readOnly?: boolean;
   gstRegistered?: boolean;
+  defaultAcceptanceMessage?: string;
 }
 
 export function ProposalEditor({
@@ -36,6 +39,7 @@ export function ProposalEditor({
   onUpdate,
   readOnly = false,
   gstRegistered = false,
+  defaultAcceptanceMessage,
 }: ProposalEditorProps) {
   const [doc, setDoc] = useState<ProposalDocument>(initialDocument);
   const [activePageId, setActivePageId] = useState<string>(
@@ -85,6 +89,28 @@ export function ProposalEditor({
     });
   };
 
+  const handleDeletePage = (pageId: string) => {
+    if (doc.pages.length <= 1) return;
+    const idx = doc.pages.findIndex((p) => p.id === pageId);
+    const remaining = doc.pages.filter((p) => p.id !== pageId);
+    updateDoc({ ...doc, pages: remaining });
+    // Switch to the adjacent page
+    const nextPage = remaining[Math.min(idx, remaining.length - 1)];
+    if (nextPage) setActivePageId(nextPage.id);
+  };
+
+  const handleMovePage = (pageId: string, direction: "up" | "down") => {
+    const idx = doc.pages.findIndex((p) => p.id === pageId);
+    if (idx === -1) return;
+    const pages = [...doc.pages];
+    if (direction === "up" && idx > 0) {
+      [pages[idx - 1], pages[idx]] = [pages[idx], pages[idx - 1]];
+    } else if (direction === "down" && idx < pages.length - 1) {
+      [pages[idx + 1], pages[idx]] = [pages[idx], pages[idx + 1]];
+    }
+    updateDoc({ ...doc, pages });
+  };
+
   // ─── Block operations ────────────────────────────────────────────────────────
 
   const updateBlock = useCallback(
@@ -118,7 +144,7 @@ export function ProposalEditor({
   const addBlock = (
     pageId: string,
     afterBlockId: string,
-    type: "richText" | "pricing" | "signature" | "columns"
+    type: "richText" | "pricing" | "signature" | "columns" | "button"
   ) => {
     let newBlock: ProposalBlock;
     if (type === "richText") {
@@ -149,8 +175,23 @@ export function ProposalEditor({
         showBorders: false,
         rows: [[makeCell(), makeCell()]],
       } as ColumnBlock;
+    } else if (type === "button") {
+      // Default targetPageId to the first other page, or empty string
+      const otherPage = doc.pages.find((p) => p.id !== pageId);
+      newBlock = {
+        type: "button",
+        id: newId(),
+        label: "Next page",
+        targetPageId: otherPage?.id ?? "",
+        style: "primary",
+        alignment: "center",
+      } as ButtonBlock;
     } else {
-      newBlock = { type: "signature", id: newId(), message: DEFAULT_ACCEPTANCE_MESSAGE };
+      newBlock = {
+        type: "signature",
+        id: newId(),
+        message: defaultAcceptanceMessage || DEFAULT_ACCEPTANCE_MESSAGE,
+      };
     }
 
     updateDoc({
@@ -197,6 +238,8 @@ export function ProposalEditor({
         onSelectPage={setActivePageId}
         onAddPage={handleAddPage}
         onRenamePage={handleRenamePage}
+        onDeletePage={readOnly ? undefined : handleDeletePage}
+        onMovePage={readOnly ? undefined : handleMovePage}
         sidebar={doc.sidebar}
         onUpdateSidebar={readOnly ? undefined : updateSidebar}
       />
@@ -259,6 +302,15 @@ export function ProposalEditor({
                     onChange={(updated) => updateBlock(activePage.id, updated)}
                     readOnly={readOnly}
                     backgroundColor={block.backgroundColor}
+                  />
+                )}
+
+                {block.type === "button" && (
+                  <ButtonBlockEditor
+                    block={block}
+                    pages={doc.pages}
+                    onChange={(updated) => updateBlock(activePage.id, updated)}
+                    readOnly={readOnly}
                   />
                 )}
 
@@ -326,6 +378,9 @@ export function ProposalEditor({
                         }
                         onAddColumns={() =>
                           addBlock(activePage.id, block.id, "columns")
+                        }
+                        onAddButton={() =>
+                          addBlock(activePage.id, block.id, "button")
                         }
                         onClose={() => setAddMenuAfterBlockId(null)}
                         acceptanceBlockExists={doc.pages.some((p) =>

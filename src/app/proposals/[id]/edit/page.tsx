@@ -84,7 +84,8 @@ export default function EditProposalPage() {
   const [internalNotes, setInternalNotes] = useState("");
   const [expiresAt, setExpiresAt]         = useState("");
   const [document, setDocument]           = useState<ProposalDocument | null>(null);
-  const [gstRegistered, setGstRegistered] = useState(false);
+  const [gstRegistered, setGstRegistered]                     = useState(false);
+  const [defaultAcceptanceMessage, setDefaultAcceptanceMessage] = useState<string | null>(null);
   const [saving, setSaving]               = useState(false);
   const [loading, setLoading]             = useState(true);
   const [hasChanges, setHasChanges]       = useState(false);
@@ -122,6 +123,7 @@ export default function EditProposalPage() {
       setInternalNotes(data.internalNotes ?? "");
       setExpiresAt(data.expiresAt ? data.expiresAt.slice(0, 10) : "");
       setGstRegistered(settings.gstRegistered ?? false);
+      setDefaultAcceptanceMessage(settings.defaultAcceptanceMessage ?? null);
 
       // Migrate legacy content to ProposalDocument if needed
       const rawContent = data.content as Record<string, unknown>;
@@ -495,6 +497,7 @@ export default function EditProposalPage() {
               onUpdate={handleEditorUpdate}
               gstRegistered={gstRegistered}
               readOnly={isAccepted}
+              defaultAcceptanceMessage={defaultAcceptanceMessage ?? undefined}
             />
           </div>
         </div>

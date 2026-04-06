@@ -34,13 +34,16 @@ export default function EditTemplatePage() {
   const [saving, setSaving]       = useState(false);
   const [loading, setLoading]     = useState(true);
   const [hasChanges, setHasChanges] = useState(false);
+  const [defaultAcceptanceMessage, setDefaultAcceptanceMessage] = useState<string | null>(null);
 
   useUnsavedChanges(hasChanges);
 
   useEffect(() => {
-    fetch(`/api/templates/${id}`)
-      .then((res) => res.json())
-      .then((data) => {
+    Promise.all([
+      fetch(`/api/templates/${id}`).then((r) => r.json()),
+      fetch("/api/settings").then((r) => r.json()),
+    ])
+      .then(([data, settings]) => {
         setTemplate(data);
         setName(data.name);
         const raw = data.content as Record<string, unknown>;
@@ -49,6 +52,7 @@ export default function EditTemplatePage() {
             ? raw
             : migrateToDocument(raw, null, defaultPricingSettings())
         );
+        setDefaultAcceptanceMessage(settings.defaultAcceptanceMessage ?? null);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -136,6 +140,7 @@ export default function EditTemplatePage() {
             <ProposalEditor
               initialDocument={document}
               onUpdate={handleEditorUpdate}
+              defaultAcceptanceMessage={defaultAcceptanceMessage ?? undefined}
             />
           </div>
         </div>

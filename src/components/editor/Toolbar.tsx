@@ -1,6 +1,7 @@
 "use client";
 
 import { Editor } from "@tiptap/react";
+import { NodeSelection } from "@tiptap/pm/state";
 import {
   Bold,
   Italic,
@@ -8,6 +9,8 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  Link as LinkIcon,
+  Link2Off as LinkOff,
   List,
   ListOrdered,
   AlignLeft,
@@ -60,6 +63,25 @@ export function Toolbar({ editor, onInsertBlock }: ToolbarProps) {
 
   if (!editor) return null;
 
+  // ─── Link helpers ──────────────────────────────────────────────────────────
+
+  const setLink = () => {
+    const prev = editor.getAttributes("link").href as string | undefined;
+    const url  = window.prompt("Enter link URL:", prev ?? "https://");
+    if (url === null) return; // cancelled
+    if (url === "") {
+      editor.chain().focus().extendMarkRange("link").unsetLink().run();
+      return;
+    }
+    editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+  };
+
+  const removeLink = () => {
+    editor.chain().focus().extendMarkRange("link").unsetLink().run();
+  };
+
+  // ─── Image helpers ─────────────────────────────────────────────────────────
+
   const addImageFromUrl = () => {
     const url = window.prompt("Enter image URL:");
     if (url) {
@@ -80,7 +102,6 @@ export function Toolbar({ editor, onInsertBlock }: ToolbarProps) {
       return;
     }
 
-    // 5MB limit for base64 embedded images
     if (file.size > 5 * 1024 * 1024) {
       alert("Image must be under 5MB.");
       return;
@@ -93,9 +114,34 @@ export function Toolbar({ editor, onInsertBlock }: ToolbarProps) {
     };
     reader.readAsDataURL(file);
 
-    // Reset so the same file can be selected again
     e.target.value = "";
   };
+
+  // ─── Image link helpers ────────────────────────────────────────────────────
+
+  const isImageNodeSelected = (): boolean => {
+    const sel = editor.state.selection;
+    return (
+      sel instanceof NodeSelection &&
+      sel.node.type.name === "image"
+    );
+  };
+
+  const setImageLink = () => {
+    const sel = editor.state.selection;
+    if (!(sel instanceof NodeSelection) || sel.node.type.name !== "image") return;
+    const currentHref = sel.node.attrs.href as string | null;
+    const url = window.prompt("Enter image link URL (leave blank to remove):", currentHref ?? "https://");
+    if (url === null) return; // cancelled
+    editor
+      .chain()
+      .focus()
+      .updateAttributes("image", { href: url || null })
+      .run();
+  };
+
+  const isLinkActive = editor.isActive("link");
+  const imageSelected = isImageNodeSelected();
 
   return (
     <div className="flex items-center gap-0.5 px-3 py-2 border-b border-gray-200 bg-white flex-wrap">
@@ -207,6 +253,37 @@ export function Toolbar({ editor, onInsertBlock }: ToolbarProps) {
       >
         <AlignRight size={16} />
       </ToolbarButton>
+
+      <Divider />
+
+      {/* Text link */}
+      {!imageSelected && (
+        <>
+          <ToolbarButton
+            onClick={setLink}
+            isActive={isLinkActive}
+            title={isLinkActive ? "Edit link" : "Add link"}
+          >
+            <LinkIcon size={16} />
+          </ToolbarButton>
+          {isLinkActive && (
+            <ToolbarButton onClick={removeLink} title="Remove link">
+              <LinkOff size={16} />
+            </ToolbarButton>
+          )}
+        </>
+      )}
+
+      {/* Image link — only shown when an image node is selected */}
+      {imageSelected && (
+        <ToolbarButton
+          onClick={setImageLink}
+          title="Set image link"
+          isActive={!!(editor.state.selection instanceof NodeSelection && (editor.state.selection as NodeSelection).node.attrs.href)}
+        >
+          <LinkIcon size={16} />
+        </ToolbarButton>
+      )}
 
       <Divider />
 

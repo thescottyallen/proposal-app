@@ -8,13 +8,14 @@ import { Check } from "lucide-react";
 import { roleFromMetadata } from "@/lib/roles";
 
 interface Settings {
-  businessName:    string;
-  abn:             string | null;
-  gstRegistered:   boolean;
-  defaultCurrency: "AUD" | "USD";
-  invoicePrefix:   string;
-  invoiceSeq:      number;
-  roundingMode:    "DOLLAR" | "CENTS";
+  businessName:             string;
+  abn:                      string | null;
+  gstRegistered:            boolean;
+  defaultCurrency:          "AUD" | "USD";
+  invoicePrefix:            string;
+  invoiceSeq:               number;
+  roundingMode:             "DOLLAR" | "CENTS";
+  defaultAcceptanceMessage: string | null;
 }
 
 export function SettingsClient() {
@@ -32,12 +33,13 @@ export function SettingsClient() {
   const [toast, setToast]         = useState<string | null>(null);
 
   // Local editable state
-  const [businessName,    setBusinessName]    = useState("");
-  const [abn,             setAbn]             = useState("");
-  const [gstRegistered,   setGstRegistered]   = useState(false);
-  const [defaultCurrency, setDefaultCurrency] = useState<"AUD" | "USD">("AUD");
-  const [invoicePrefix,   setInvoicePrefix]   = useState("INV");
-  const [roundingMode,    setRoundingMode]    = useState<"DOLLAR" | "CENTS">("CENTS");
+  const [businessName,             setBusinessName]             = useState("");
+  const [abn,                      setAbn]                      = useState("");
+  const [gstRegistered,            setGstRegistered]            = useState(false);
+  const [defaultCurrency,          setDefaultCurrency]          = useState<"AUD" | "USD">("AUD");
+  const [invoicePrefix,            setInvoicePrefix]            = useState("INV");
+  const [roundingMode,             setRoundingMode]             = useState<"DOLLAR" | "CENTS">("CENTS");
+  const [defaultAcceptanceMessage, setDefaultAcceptanceMessage] = useState("");
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -55,6 +57,7 @@ export function SettingsClient() {
         setDefaultCurrency(data.defaultCurrency);
         setInvoicePrefix(data.invoicePrefix);
         setRoundingMode(data.roundingMode);
+        setDefaultAcceptanceMessage(data.defaultAcceptanceMessage ?? "");
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -68,11 +71,12 @@ export function SettingsClient() {
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({
           businessName,
-          abn:             abn.trim() || null,
+          abn:                      abn.trim() || null,
           gstRegistered,
           defaultCurrency,
-          invoicePrefix:   invoicePrefix.trim() || "INV",
+          invoicePrefix:            invoicePrefix.trim() || "INV",
           roundingMode,
+          defaultAcceptanceMessage: defaultAcceptanceMessage.trim() || null,
         }),
       });
       if (res.ok) {
@@ -189,6 +193,22 @@ export function SettingsClient() {
               </select>
             </div>
           </div>
+        </section>
+
+        {/* Default acceptance message */}
+        <section className="bg-white rounded-lg border border-gray-200 p-5 mb-5">
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Default Acceptance Message</h2>
+          <p className="text-xs text-gray-400 mb-4">
+            This message appears above the signature field on new Acceptance blocks. You can still override
+            it per-proposal in the editor.
+          </p>
+          <textarea
+            value={defaultAcceptanceMessage}
+            onChange={e => setDefaultAcceptanceMessage(e.target.value)}
+            rows={4}
+            placeholder="By entering your name below and clicking Accept, you confirm that you have read and agree to the terms of this proposal…"
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          />
         </section>
 
         {/* Invoice numbering */}
