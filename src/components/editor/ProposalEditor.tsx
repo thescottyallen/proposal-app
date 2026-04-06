@@ -8,6 +8,7 @@ import { PricingBlockEditor } from "./PricingBlockEditor";
 import { SignatureBlockEditor, DEFAULT_ACCEPTANCE_MESSAGE } from "./SignatureBlockEditor";
 import { ColumnBlockEditor } from "./ColumnBlockEditor";
 import { AddBlockMenu } from "./AddBlockMenu";
+import { ContentBlockPicker } from "./ContentBlockPicker";
 import {
   ProposalDocument,
   ProposalPage,
@@ -42,6 +43,8 @@ export function ProposalEditor({
   const [addMenuAfterBlockId, setAddMenuAfterBlockId] = useState<string | null>(
     null
   );
+  // Tracks which block's toolbar triggered the content-block picker
+  const [contentBlockPickerAfterId, setContentBlockPickerAfterId] = useState<string | null>(null);
 
   const activePage =
     doc.pages.find((p) => p.id === activePageId) ?? doc.pages[0];
@@ -161,6 +164,21 @@ export function ProposalEditor({
     setAddMenuAfterBlockId(null);
   };
 
+  // Insert content blocks (from library) after a given block
+  const insertContentBlocksAfter = (afterBlockId: string, blocks: ProposalBlock[]) => {
+    updateDoc({
+      ...doc,
+      pages: doc.pages.map((p) => {
+        if (p.id !== activePage?.id) return p;
+        const idx = p.blocks.findIndex((b) => b.id === afterBlockId);
+        const newBlocks = [...p.blocks];
+        newBlocks.splice(idx + 1, 0, ...blocks);
+        return { ...p, blocks: newBlocks };
+      }),
+    });
+    setContentBlockPickerAfterId(null);
+  };
+
   if (!activePage) return null;
 
   return (
@@ -188,6 +206,11 @@ export function ProposalEditor({
                       updateBlock(activePage.id, { ...block, content })
                     }
                     readOnly={readOnly}
+                    onInsertContentBlock={
+                      readOnly
+                        ? undefined
+                        : () => setContentBlockPickerAfterId(block.id)
+                    }
                   />
                 )}
 
@@ -281,6 +304,19 @@ export function ProposalEditor({
           ))}
         </div>
       </div>
+
+      {/* Page-level content block picker — inserts ProposalBlocks at the right position */}
+      {!readOnly && (
+        <ContentBlockPicker
+          isOpen={contentBlockPickerAfterId !== null}
+          onClose={() => setContentBlockPickerAfterId(null)}
+          onInsertProposalBlocks={(blocks) => {
+            if (contentBlockPickerAfterId) {
+              insertContentBlocksAfter(contentBlockPickerAfterId, blocks);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

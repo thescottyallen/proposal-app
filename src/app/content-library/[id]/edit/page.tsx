@@ -1,19 +1,18 @@
 "use client";
 
 import { Shell } from "@/components/ui/Shell";
-import { useEditor, EditorContent } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
-import Placeholder from "@tiptap/extension-placeholder";
-import TextAlign from "@tiptap/extension-text-align";
-import Underline from "@tiptap/extension-underline";
-import { Toolbar } from "@/components/editor/Toolbar";
-import { ContentBlockPicker } from "@/components/editor/ContentBlockPicker";
+import { ProposalEditor } from "@/components/editor/ProposalEditor";
 import { useParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import { ArrowLeft, Save, Check } from "lucide-react";
 import Link from "next/link";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
+import {
+  isProposalDocument,
+  migrateToDocument,
+  ProposalDocument,
+} from "@/lib/proposal-document";
+import { defaultPricingSettings } from "@/lib/pricing-types";
 
 const CATEGORIES = [
   "About Us",
@@ -25,25 +24,17 @@ const CATEGORIES = [
   "Other",
 ];
 
-interface ContentBlock {
-  id: string;
-  name: string;
-  category: string;
-  content: Record<string, unknown>;
-}
-
 export default function EditContentBlockPage() {
   const params = useParams();
   const id = params.id as string;
 
-  const [block, setBlock] = useState<ContentBlock | null>(null);
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
-  const [content, setContent] = useState<Record<string, unknown>>({});
+  const [doc, setDoc] = useState<ProposalDocument | null>(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
-  const [showBlockPicker, setShowBlockPicker] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = (message: string) => {
@@ -53,68 +44,42 @@ export default function EditContentBlockPage() {
 
   useUnsavedChanges(hasChanges);
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
-      }),
-      Image.configure({ inline: false, allowBase64: true }),
-      Placeholder.configure({
-        placeholder: "Start writing your content block...",
-      }),
-      TextAlign.configure({
-        types: ["heading", "paragraph"],
-      }),
-      Underline,
-    ],
-    content: undefined,
-    editable: true,
-    onUpdate: ({ editor }) => {
-      setContent(editor.getJSON());
-      setHasChanges(true);
-    },
-    immediatelyRender: false,
-  });
-
   useEffect(() => {
     fetch(`/api/content-blocks/${id}`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) { setNotFound(true); setLoading(false); return null; }
+        return res.json();
+      })
       .then((data) => {
-        setBlock(data);
+        if (!data) return;
         setName(data.name);
         setCategory(data.category);
-        setContent(data.content);
-        if (editor) {
-          editor.commands.setContent(data.content);
-        }
+
+        // Migrate legacy TipTap content to ProposalDocument if needed
+        const raw = data.content as Record<string, unknown>;
+        const resolved: ProposalDocument = isProposalDocument(raw)
+          ? raw
+          : migrateToDocument(raw, null, defaultPricingSettings());
+
+        setDoc(resolved);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
-  }, [id, editor]);
-
-  const handleNameChange = (value: string) => {
-    setName(value);
-    setHasChanges(true);
-  };
-
-  const handleCategoryChange = (value: string) => {
-    setCategory(value);
-    setHasChanges(true);
-  };
+      .catch(() => { setNotFound(true); setLoading(false); });
+  }, [id]);
 
   const handleSave = async () => {
+    if (!doc) return;
     setSaving(true);
     try {
       const res = await fetch(`/api/content-blocks/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, category, content }),
+        body: JSON.stringify({ name, category, content: doc }),
       });
       if (!res.ok) { showToast("Save failed"); return; }
       setHasChanges(false);
       showToast("Saved");
-    } catch (error) {
-      console.error("Failed to save:", error);
+    } catch {
       showToast("Save failed");
     } finally {
       setSaving(false);
@@ -125,13 +90,13 @@ export default function EditContentBlockPage() {
     return (
       <Shell>
         <div className="flex items-center justify-center h-full">
-          <p className="text-gray-500">Loading content block...</p>
+          <p className="text-gray-500">Loading...</p>
         </div>
       </Shell>
     );
   }
 
-  if (!block) {
+  if (notFound || !doc) {
     return (
       <Shell>
         <div className="flex items-center justify-center h-full">
@@ -149,82 +114,48 @@ export default function EditContentBlockPage() {
           {toast}
         </div>
       )}
-      <div className="px-8 py-8 max-w-4xl">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/content-library"
-              className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <ArrowLeft size={20} />
-            </Link>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => handleNameChange(e.target.value)}
-              className="text-2xl font-bold text-gray-900 border-0 bg-transparent focus:outline-none focus:ring-0 p-0"
-            />
-          </div>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-          >
-            <Save size={14} />
-            {saving ? "Saving..." : "Save"}
-          </button>
-        </div>
 
-        {/* Category selector */}
-        <div className="mb-6">
-          <label className="block text-xs text-gray-500 mb-1">Category</label>
+      {/* Header */}
+      <div className="flex items-center justify-between px-8 py-4 border-b border-gray-200 bg-white">
+        <div className="flex items-center gap-4">
+          <Link
+            href="/content-library"
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <ArrowLeft size={20} />
+          </Link>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => { setName(e.target.value); setHasChanges(true); }}
+            className="text-xl font-bold text-gray-900 border-0 bg-transparent focus:outline-none focus:ring-0 p-0 min-w-[200px]"
+            placeholder="Block name..."
+          />
           <select
             value={category}
-            onChange={(e) => handleCategoryChange(e.target.value)}
-            className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            onChange={(e) => { setCategory(e.target.value); setHasChanges(true); }}
+            className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
           >
             {CATEGORIES.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
+              <option key={cat} value={cat}>{cat}</option>
             ))}
           </select>
         </div>
+        <button
+          onClick={handleSave}
+          disabled={saving || !hasChanges}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+        >
+          <Save size={14} />
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
 
-        {/* Editor */}
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
-          <Toolbar
-            editor={editor}
-            onInsertBlock={() => setShowBlockPicker(true)}
-          />
-          <div className="px-8 py-6">
-            <EditorContent
-              editor={editor}
-              className="prose prose-sm sm:prose-base max-w-none focus:outline-none min-h-[400px]
-                [&_.tiptap]:outline-none
-                [&_.tiptap_h1]:text-3xl [&_.tiptap_h1]:font-bold [&_.tiptap_h1]:mb-4 [&_.tiptap_h1]:mt-6
-                [&_.tiptap_h2]:text-2xl [&_.tiptap_h2]:font-semibold [&_.tiptap_h2]:mb-3 [&_.tiptap_h2]:mt-5
-                [&_.tiptap_h3]:text-xl [&_.tiptap_h3]:font-semibold [&_.tiptap_h3]:mb-2 [&_.tiptap_h3]:mt-4
-                [&_.tiptap_p]:mb-3 [&_.tiptap_p]:leading-relaxed
-                [&_.tiptap_img]:rounded-lg [&_.tiptap_img]:max-w-full
-                [&_.tiptap_hr]:my-6 [&_.tiptap_hr]:border-gray-200
-                [&_.tiptap_ul]:list-disc [&_.tiptap_ul]:pl-6
-                [&_.tiptap_ol]:list-decimal [&_.tiptap_ol]:pl-6
-                [&_.tiptap_.is-editor-empty:first-child::before]:text-gray-400
-                [&_.tiptap_.is-editor-empty:first-child::before]:content-[attr(data-placeholder)]
-                [&_.tiptap_.is-editor-empty:first-child::before]:float-left
-                [&_.tiptap_.is-editor-empty:first-child::before]:h-0
-                [&_.tiptap_.is-editor-empty:first-child::before]:pointer-events-none
-              "
-            />
-          </div>
-        </div>
-
-        <ContentBlockPicker
-          editor={editor}
-          isOpen={showBlockPicker}
-          onClose={() => setShowBlockPicker(false)}
+      {/* Editor */}
+      <div className="flex-1 overflow-hidden">
+        <ProposalEditor
+          initialDocument={doc}
+          onUpdate={(updated) => { setDoc(updated); setHasChanges(true); }}
         />
       </div>
     </Shell>

@@ -4,6 +4,11 @@ import { useState, useEffect } from "react";
 import { Editor } from "@tiptap/react";
 import type { Content } from "@tiptap/core";
 import { Blocks, X, Search, Plus } from "lucide-react";
+import {
+  isProposalDocument,
+  ProposalBlock,
+  newId,
+} from "@/lib/proposal-document";
 
 interface ContentBlock {
   id: string;
@@ -14,13 +19,17 @@ interface ContentBlock {
 }
 
 interface ContentBlockPickerProps {
-  editor: Editor | null;
+  /** Provided when inserting TipTap content into a plain editor (content library) */
+  editor?: Editor | null;
+  /** Provided when inserting into a proposal — receives all blocks from the saved content */
+  onInsertProposalBlocks?: (blocks: ProposalBlock[]) => void;
   isOpen: boolean;
   onClose: () => void;
 }
 
 export function ContentBlockPicker({
   editor,
+  onInsertProposalBlocks,
   isOpen,
   onClose,
 }: ContentBlockPickerProps) {
@@ -57,42 +66,81 @@ export function ContentBlockPicker({
   });
 
   const handleInsert = (block: ContentBlock) => {
-    if (!editor) return;
+    const rawContent = block.content;
 
-    const blockContent = block.content as {
-      type?: string;
-      content?: Content[];
-    };
+    // ── ProposalDocument content block ──────────────────────────────────────
+    if (isProposalDocument(rawContent)) {
+      // Collect all blocks from all pages, assign fresh IDs to avoid conflicts
+      const proposalBlocks: ProposalBlock[] = rawContent.pages.flatMap((page) =>
+        page.blocks.map((b) => ({ ...b, id: newId() }))
+      );
 
-    // Insert the block's content nodes at the current cursor position
-    if (blockContent?.content && Array.isArray(blockContent.content)) {
-      // Insert each top-level node from the block
-      blockContent.content.forEach((node) => {
-        editor.commands.insertContent(node);
-      });
-    } else {
-      // Fallback: insert the whole content object
-      editor.commands.insertContent(blockContent as Content);
+      if (onInsertProposalBlocks) {
+        onInsertProposalBlocks(proposalBlocks);
+      } else if (editor) {
+        // Fallback: insert text content from richText blocks only
+        proposalBlocks.forEach((b) => {
+          if (b.type === "richText" && b.content) {
+            const c = b.content as { content?: Content[] };
+            if (c?.content && Array.isArray(c.content)) {
+              c.content.forEach((node) => editor.commands.insertContent(node));
+            }
+          }
+        });
+        editor.commands.focus();
+      }
+      onClose();
+      return;
     }
 
-    editor.commands.focus();
-    onClose();
+    // ── Legacy TipTap content block ──────────────────────────────────────────
+    if (onInsertProposalBlocks) {
+      // Wrap TipTap content in a richText block
+      const wrappedBlock: ProposalBlock = {
+        type: "richText",
+        id: newId(),
+        content: rawContent,
+      };
+      onInsertProposalBlocks([wrappedBlock]);
+      onClose();
+      return;
+    }
+
+    if (editor) {
+      const blockContent = rawContent as {
+        type?: string;
+        content?: Content[];
+      };
+      if (blockContent?.content && Array.isArray(blockContent.content)) {
+        blockContent.content.forEach((node) => {
+          editor.commands.insertContent(node);
+        });
+      } else {
+        editor.commands.insertContent(blockContent as Content);
+      }
+      editor.commands.focus();
+      onClose();
+    }
   };
 
-  // Extract a plain-text preview from TipTap JSON content
+  // Extract a plain-text preview from TipTap JSON content or ProposalDocument
   const getPreviewText = (content: Record<string, unknown>): string => {
-    const doc = content as { content?: Array<{ content?: Array<{ text?: string }> }> };
-    if (!doc.content) return "";
-    const texts: string[] = [];
-    for (const node of doc.content) {
-      if (node.content) {
-        for (const inline of node.content) {
-          if (inline.text) texts.push(inline.text);
+    if (isProposalDocument(content)) {
+      // Pull text from the first richText block
+      for (const page of content.pages) {
+        for (const block of page.blocks) {
+          if (block.type === "richText") {
+            return extractTipTapText(block.content);
+          }
+          if (block.type === "columns") {
+            const firstTextCell = block.rows[0]?.find((c) => c.type === "text");
+            if (firstTextCell) return extractTipTapText(firstTextCell.content);
+          }
         }
       }
+      return "(column / layout block)";
     }
-    const full = texts.join(" ");
-    return full.length > 120 ? full.slice(0, 120) + "..." : full;
+    return extractTipTapText(content);
   };
 
   return (
@@ -212,4 +260,23 @@ export function ContentBlockPicker({
       </div>
     </div>
   );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function extractTipTapText(content: Record<string, unknown>): string {
+  const doc = content as {
+    content?: Array<{ content?: Array<{ text?: string }> }>;
+  };
+  if (!doc.content) return "";
+  const texts: string[] = [];
+  for (const node of doc.content) {
+    if (node.content) {
+      for (const inline of node.content) {
+        if (inline.text) texts.push(inline.text);
+      }
+    }
+  }
+  const full = texts.join(" ");
+  return full.length > 120 ? full.slice(0, 120) + "..." : full;
 }

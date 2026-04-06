@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Plus, Blocks, Trash2, Pencil } from "lucide-react";
 import Link from "next/link";
 import { formatDate } from "@/lib/utils";
+import { newId } from "@/lib/proposal-document";
 
 interface ContentBlock {
   id: string;
@@ -57,11 +58,21 @@ export default function ContentLibraryPage() {
         name: newName,
         category: newCategory,
         content: {
-          type: "doc",
-          content: [
+          version: 2,
+          pages: [
             {
-              type: "paragraph",
-              content: [{ type: "text", text: "Edit this content block..." }],
+              id: newId(),
+              name: "Content",
+              blocks: [
+                {
+                  type: "richText",
+                  id: newId(),
+                  content: {
+                    type: "doc",
+                    content: [{ type: "paragraph" }],
+                  },
+                },
+              ],
             },
           ],
         },

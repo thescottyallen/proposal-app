@@ -32,12 +32,18 @@ interface RichTextBlockProps {
   block: RichTextBlockType;
   onChange: (content: Record<string, unknown>) => void;
   readOnly?: boolean;
+  /**
+   * When provided, clicking the content-block icon in the toolbar calls this
+   * instead of opening a local picker — lets ProposalEditor own insertion.
+   */
+  onInsertContentBlock?: () => void;
 }
 
 export function RichTextBlock({
   block,
   onChange,
   readOnly = false,
+  onInsertContentBlock,
 }: RichTextBlockProps) {
   const [showBlockPicker, setShowBlockPicker] = useState(false);
 
@@ -57,19 +63,28 @@ export function RichTextBlock({
     },
   });
 
+  // If a page-level handler is provided, route the toolbar button there;
+  // otherwise fall back to the local picker (used in stand-alone editors).
+  const handleInsertBlock = onInsertContentBlock
+    ? onInsertContentBlock
+    : () => setShowBlockPicker(true);
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
       {!readOnly && (
         <Toolbar
           editor={editor}
-          onInsertBlock={() => setShowBlockPicker(true)}
+          onInsertBlock={handleInsertBlock}
         />
       )}
-      <ContentBlockPicker
-        editor={editor}
-        isOpen={showBlockPicker}
-        onClose={() => setShowBlockPicker(false)}
-      />
+      {/* Local picker only active when no page-level handler is present */}
+      {!onInsertContentBlock && (
+        <ContentBlockPicker
+          editor={editor}
+          isOpen={showBlockPicker}
+          onClose={() => setShowBlockPicker(false)}
+        />
+      )}
       <div className="px-8 py-6">
         <EditorContent editor={editor} className={PROSE} />
       </div>
