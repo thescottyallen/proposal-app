@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { clerkClient } from "@clerk/nextjs/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { notFound } from "next/navigation";
 import { PublicProposalView } from "./PublicProposalView";
 import { sendOpenNotification } from "@/lib/email";
@@ -10,6 +10,7 @@ interface Props {
 
 export default async function PublicProposalPage({ params }: Props) {
   const { publicId } = await params;
+  const { userId } = await auth();
 
   const proposal = await prisma.proposal.findUnique({
     where: { publicId },
@@ -33,7 +34,9 @@ export default async function PublicProposalPage({ params }: Props) {
   }
 
   // Log open event and handle first-open notification
-  if (["SENT", "VIEWED"].includes(proposal.status)) {
+  // Skip tracking if the viewer is the proposal owner
+  const isOwner = userId === proposal.createdBy;
+  if (!isOwner && ["SENT", "VIEWED"].includes(proposal.status)) {
     const existingOpenCount = await prisma.proposalEvent.count({
       where: { proposalId: proposal.id, eventType: "opened" },
     });
