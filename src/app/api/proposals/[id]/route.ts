@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { clerkClient } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
-import { roleFromMetadata, canDeleteProposal } from "@/lib/roles";
+import { getAuthContext } from "@/lib/roles.server";
+import { proposalAccessWhere } from "@/lib/roles";
 import { computePricingTotals } from "@/lib/utils";
 import {
   isProposalDocument,
@@ -29,6 +30,31 @@ function firstPricingSettings(doc: ProposalDocument): ProposalPricingSettings | 
   return blocks.length > 0 ? blocks[0].pricingSettings : null;
 }
 
+/** Best-effort resolution of Clerk user IDs to display names. */
+async function resolveUserNames(
+  ids: string[]
+): Promise<Record<string, string>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length === 0) return {};
+  const client = await clerkClient();
+  const entries = await Promise.all(
+    unique.map(async (uid) => {
+      try {
+        const u = await client.users.getUser(uid);
+        const name =
+          [u.firstName, u.lastName].filter(Boolean).join(" ").trim() ||
+          u.emailAddresses.find((e) => e.id === u.primaryEmailAddressId)
+            ?.emailAddress ||
+          "Unknown user";
+        return [uid, name] as const;
+      } catch {
+        return [uid, "Unknown user"] as const;
+      }
+    })
+  );
+  return Object.fromEntries(entries);
+}
+
 // ─── GET /api/proposals/:id ───────────────────────────────────────────────────
 
 export async function GET(
@@ -36,21 +62,43 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await getAuthContext();
+  if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const proposal = await prisma.proposal.findFirst({
-    where: { id, createdBy: userId },
+    // Admins may open any proposal; everyone else only their own.
+    where: { id, ...proposalAccessWhere(ctx.role, ctx.userId) },
     include: {
       template:  { select: { name: true } },
       events:    { orderBy: { createdAt: "desc" }, take: 50 },
-      revisions: { orderBy: { version: "desc" }, take: 10, select: { version: true, createdAt: true } },
+      revisions: { orderBy: { version: "desc" }, take: 10, select: { version: true, createdAt: true, createdBy: true } },
     },
   });
 
   if (!proposal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  return NextResponse.json(proposal);
+  // Resolve names for the author plus anyone who has edited, for the change log.
+  type EventForLog = { id: string; eventType: string; createdAt: Date | string; metadata: unknown };
+  const editorIds = (proposal.events as EventForLog[])
+    .filter((e) => e.eventType === "edited")
+    .map((e) => (e.metadata as { editedBy?: string } | null)?.editedBy)
+    .filter((x): x is string => Boolean(x));
+  const names = await resolveUserNames([proposal.createdBy, ...editorIds]);
+
+  const events = (proposal.events as EventForLog[]).map((e) => {
+    const editedBy = (e.metadata as { editedBy?: string } | null)?.editedBy;
+    return {
+      ...e,
+      actorName: editedBy ? (names[editedBy] ?? "Unknown user") : null,
+    };
+  });
+
+  return NextResponse.json({
+    ...proposal,
+    events,
+    authorName: names[proposal.createdBy] ?? "Unknown user",
+    viewerIsAuthor: proposal.createdBy === ctx.userId,
+  });
 }
 
 // ─── PATCH /api/proposals/:id ─────────────────────────────────────────────────
@@ -60,10 +108,13 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await getAuthContext();
+  if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const existing = await prisma.proposal.findFirst({ where: { id, createdBy: userId } });
+  // Admins may edit any proposal; everyone else only their own.
+  const existing = await prisma.proposal.findFirst({
+    where: { id, ...proposalAccessWhere(ctx.role, ctx.userId) },
+  });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await request.json();
@@ -101,7 +152,7 @@ export async function PATCH(
       data: {
         proposalId: id,
         version:    (lastRevision?.version ?? 0) + 1,
-        createdBy:  userId,
+        createdBy:  ctx.userId,
         snapshot: {
           title:      existing.title,
           content:    existing.content,
@@ -138,6 +189,36 @@ export async function PATCH(
     },
   });
 
+  // Change log: record who changed what, so every proposal has a visible edit
+  // history. Especially important now that admins can edit others' proposals.
+  const changedFields: string[] = [];
+  if (title       !== undefined && title       !== existing.title)       changedFields.push("Title");
+  if (clientName  !== undefined && clientName  !== existing.clientName)  changedFields.push("Client name");
+  if (clientEmail !== undefined && clientEmail !== existing.clientEmail) changedFields.push("Client email");
+  if (clientAbn   !== undefined && (clientAbn ?? null) !== (existing.clientAbn ?? null)) changedFields.push("Client ABN");
+  if (status      !== undefined && status      !== existing.status)      changedFields.push("Status");
+  if (internalNotes !== undefined && (internalNotes ?? null) !== (existing.internalNotes ?? null)) changedFields.push("Internal notes");
+  if (expiresAt !== undefined) {
+    const newExp = expiresAt ? new Date(expiresAt).toISOString() : null;
+    const oldExp = existing.expiresAt ? existing.expiresAt.toISOString() : null;
+    if (newExp !== oldExp) changedFields.push("Expiry date");
+  }
+  if (content !== undefined && JSON.stringify(content) !== JSON.stringify(existing.content)) {
+    changedFields.push("Proposal content");
+  } else if (legacyPricingData) {
+    changedFields.push("Pricing");
+  }
+
+  if (changedFields.length > 0) {
+    await prisma.proposalEvent.create({
+      data: {
+        proposalId: id,
+        eventType:  "edited",
+        metadata:   { editedBy: ctx.userId, changedFields },
+      },
+    });
+  }
+
   return NextResponse.json(proposal);
 }
 
@@ -148,18 +229,20 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const client = await clerkClient();
-  const user   = await client.users.getUser(userId);
-  const role   = roleFromMetadata(user.publicMetadata as Record<string, unknown>);
-  if (!canDeleteProposal(role)) {
-    return NextResponse.json({ error: "Only admins can delete proposals" }, { status: 403 });
-  }
+  const ctx = await getAuthContext();
+  if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const existing = await prisma.proposal.findFirst({ where: { id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Only the proposal's author may delete it — admins can view and edit any
+  // proposal, but deletion stays with whoever created it.
+  if (existing.createdBy !== ctx.userId) {
+    return NextResponse.json(
+      { error: "Only the proposal's author can delete it" },
+      { status: 403 }
+    );
+  }
 
   await prisma.proposal.delete({ where: { id } });
   return NextResponse.json({ success: true });

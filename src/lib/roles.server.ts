@@ -15,6 +15,22 @@ export async function getCurrentUserRole(): Promise<AppRole> {
   return roleFromMetadata(metadata);
 }
 
+/**
+ * Resolve the current user's id and role for use inside API route handlers.
+ * Unlike getCurrentUserRole(), this never redirects — it returns null when the
+ * request is unauthenticated so the caller can respond with a 401.
+ */
+export async function getAuthContext(): Promise<
+  { userId: string; role: AppRole } | null
+> {
+  const { userId, sessionClaims } = await auth();
+  if (!userId) return null;
+  const metadata = (sessionClaims as Record<string, unknown>)?.metadata as
+    | Record<string, unknown>
+    | undefined;
+  return { userId, role: roleFromMetadata(metadata) };
+}
+
 /** Redirect to /proposals if the user doesn't have the required role. */
 export async function requireRole(allowed: AppRole[]): Promise<AppRole> {
   const role = await getCurrentUserRole();

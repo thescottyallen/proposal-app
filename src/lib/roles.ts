@@ -45,3 +45,20 @@ export function canEditProposal(role: AppRole): boolean {
 export function canSeeMargin(role: AppRole): boolean {
   return role === "admin" || role === "member";
 }
+
+/** Admins may view and edit every proposal; everyone else is limited to their own. */
+export function canAccessAllProposals(role: AppRole): boolean {
+  return role === "admin";
+}
+
+/**
+ * Prisma `where` fragment that scopes a proposal query to what the given user
+ * may access. Admins get an empty fragment (all proposals); everyone else is
+ * restricted to proposals they authored.
+ */
+export function proposalAccessWhere(
+  role: AppRole,
+  userId: string
+): { createdBy?: string } {
+  return canAccessAllProposals(role) ? {} : { createdBy: userId };
+}
