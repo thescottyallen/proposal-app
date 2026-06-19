@@ -6,7 +6,7 @@ import { useRouter, useParams } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import {
   ArrowLeft, Save, Send, Copy, Trash2,
-  BookmarkPlus, Check, Mail, X, Link2, Lock,
+  BookmarkPlus, Check, Mail, X, Link2, Lock, History,
 } from "lucide-react";
 import Link from "next/link";
 import { getStatusColor, formatDate } from "@/lib/utils";
@@ -48,6 +48,37 @@ interface ProposalMeta {
   paymentTerms:       string;
   latePaymentClause:  string | null;
   pricingData:        Record<string, unknown> | null;
+  // Access + activity (added by the detail API)
+  authorName?:        string;
+  viewerIsAuthor?:    boolean;
+  events?:            ProposalEventMeta[];
+}
+
+interface ProposalEventMeta {
+  id:        string;
+  eventType: string;
+  createdAt: string;
+  actorName: string | null;
+  metadata:  { editedBy?: string; changedFields?: string[] } | null;
+}
+
+/** Human-readable description of a proposal activity event. */
+function describeEvent(ev: ProposalEventMeta): string {
+  if (ev.eventType === "edited") {
+    const who = ev.actorName ?? "Someone";
+    const fields = ev.metadata?.changedFields ?? [];
+    return fields.length > 0
+      ? `${who} edited ${fields.join(", ").toLowerCase()}`
+      : `${who} made an edit`;
+  }
+  const labels: Record<string, string> = {
+    opened:         "Client opened the proposal",
+    viewed_section: "Client viewed a section",
+    forwarded:      "Proposal was forwarded",
+    signed:         "Proposal was signed",
+    accepted:       "Proposal was accepted",
+  };
+  return labels[ev.eventType] ?? ev.eventType;
 }
 
 function legacyPricingSettings(p: ProposalMeta) {
@@ -90,6 +121,7 @@ export default function EditProposalPage() {
   const [loading, setLoading]             = useState(true);
   const [hasChanges, setHasChanges]       = useState(false);
   const [toast, setToast]                 = useState<string | null>(null);
+  const [showHistory, setShowHistory]     = useState(false);
   const [showSaveAsTemplate, setShowSaveAsTemplate] = useState(false);
   const [templateName, setTemplateName]   = useState("");
   const [showSendModal, setShowSendModal] = useState(false);
@@ -175,9 +207,37 @@ export default function EditProposalPage() {
 
   const handleDelete = async () => {
     if (!confirm("Delete this proposal?")) return;
-    await fetch(`/api/proposals/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/proposals/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      showToast(data.error || "Delete failed");
+      return;
+    }
     clearChanges();
     router.push("/");
+  };
+
+  // Refresh activity then open the change-log modal.
+  const openHistory = async () => {
+    try {
+      const res = await fetch(`/api/proposals/${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setProposal((prev) =>
+          prev
+            ? {
+                ...prev,
+                events:         data.events,
+                authorName:     data.authorName,
+                viewerIsAuthor: data.viewerIsAuthor,
+              }
+            : data
+        );
+      }
+    } catch {
+      /* non-fatal — open with whatever we already have */
+    }
+    setShowHistory(true);
   };
 
   const handleDuplicate = async () => {
@@ -308,6 +368,9 @@ export default function EditProposalPage() {
   }
 
   const isAccepted = proposal.status === "ACCEPTED";
+  // Admins can open & edit any proposal, but sending, follow-ups and deletion
+  // stay with the author. (Older API responses omit the flag -> treat as author.)
+  const isAuthor = proposal.viewerIsAuthor !== false;
 
   return (
     <Shell>
@@ -364,18 +427,20 @@ export default function EditProposalPage() {
                     {saving ? "Saving..." : "Save"}
                   </button>
                 )}
-                <button
-                  onClick={() => {
-                    setSendTo(clientEmail || "");
-                    setSendMessage("");
-                    setSendError("");
-                    setShowSendModal(true);
-                  }}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  <Send size={14} />
-                  {isAccepted ? "Resend" : "Send"}
-                </button>
+                {isAuthor && (
+                  <button
+                    onClick={() => {
+                      setSendTo(clientEmail || "");
+                      setSendMessage("");
+                      setSendError("");
+                      setShowSendModal(true);
+                    }}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <Send size={14} />
+                    {isAccepted ? "Resend" : "Send"}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -385,7 +450,7 @@ export default function EditProposalPage() {
                 <Link2 size={12} />
                 Copy public link
               </button>
-              {["SENT", "VIEWED"].includes(proposal.status) && (
+              {isAuthor && ["SENT", "VIEWED"].includes(proposal.status) && (
                 <button
                   onClick={() => {
                     setFollowUpTo(clientEmail || "");
@@ -407,10 +472,18 @@ export default function EditProposalPage() {
                 <BookmarkPlus size={12} />
                 Save as Template
               </button>
-              <button onClick={handleDelete} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-600 border border-red-200 rounded-md hover:bg-red-50 ml-auto">
-                <Trash2 size={12} />
-                Delete
-              </button>
+              <div className="ml-auto flex items-center gap-2">
+                <button onClick={openHistory} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">
+                  <History size={12} />
+                  History
+                </button>
+                {isAuthor && (
+                  <button onClick={handleDelete} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-600 border border-red-200 rounded-md hover:bg-red-50">
+                    <Trash2 size={12} />
+                    Delete
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Save as template inline form */}
@@ -611,6 +684,43 @@ export default function EditProposalPage() {
                 <Send size={14} />
                 {followUpSending ? "Sending..." : "Send Follow-up"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* History / change log modal */}
+      {showHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/20" onClick={() => setShowHistory(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div className="flex items-center gap-2">
+                <History size={18} className="text-gray-600" />
+                <h2 className="text-sm font-semibold text-gray-900">Activity &amp; change log</h2>
+              </div>
+              <button onClick={() => setShowHistory(false)} className="p-1 text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-5 py-4 overflow-y-auto">
+              <p className="text-xs text-gray-500 mb-3">
+                Created by {proposal.authorName ?? "the author"}.
+              </p>
+              {(!proposal.events || proposal.events.length === 0) ? (
+                <p className="text-sm text-gray-500">No activity recorded yet.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {proposal.events.map((ev) => (
+                    <li key={ev.id} className="flex items-start gap-3 text-sm">
+                      <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-gray-300 shrink-0" />
+                      <div>
+                        <p className="text-gray-900">{describeEvent(ev)}</p>
+                        <p className="text-xs text-gray-400">{formatDate(ev.createdAt)}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </div>

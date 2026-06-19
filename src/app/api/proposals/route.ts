@@ -11,15 +11,18 @@ import {
 import {
   defaultPricingSettings,
 } from "@/lib/pricing-types";
+import { getAuthContext } from "@/lib/roles.server";
+import { proposalAccessWhere } from "@/lib/roles";
 
 // ─── GET /api/proposals ───────────────────────────────────────────────────────
 
 export async function GET() {
-  const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ctx = await getAuthContext();
+  if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const proposals = await prisma.proposal.findMany({
-    where:   { createdBy: userId },
+    // Admins see every proposal; everyone else only their own.
+    where:   proposalAccessWhere(ctx.role, ctx.userId),
     orderBy: { createdAt: "desc" },
     select: {
       id:            true,
@@ -33,7 +36,9 @@ export async function GET() {
       publicId:      true,
       expiresAt:     true,
       createdAt:     true,
-      _count: { select: { events: true } },
+      createdBy:     true,
+      // Count only client-facing engagement events, not internal "edited" log entries.
+      _count: { select: { events: { where: { eventType: { not: "edited" } } } } },
     },
   });
 
