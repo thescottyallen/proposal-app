@@ -1,5 +1,5 @@
 // Server-only role helpers. Do NOT import this file from client components.
-import { auth } from "@clerk/nextjs/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { roleFromMetadata, type AppRole } from "@/lib/roles";
 
@@ -23,12 +23,15 @@ export async function getCurrentUserRole(): Promise<AppRole> {
 export async function getAuthContext(): Promise<
   { userId: string; role: AppRole } | null
 > {
-  const { userId, sessionClaims } = await auth();
+  const { userId } = await auth();
   if (!userId) return null;
-  const metadata = (sessionClaims as Record<string, unknown>)?.metadata as
-    | Record<string, unknown>
-    | undefined;
-  return { userId, role: roleFromMetadata(metadata) };
+  // Read the role from Clerk publicMetadata (authoritative), matching the rest
+  // of the server-side role checks (team routes, admin setup). This avoids
+  // relying on a custom JWT "metadata" claim that this project does not set up.
+  const client = await clerkClient();
+  const user = await client.users.getUser(userId);
+  const role = roleFromMetadata(user.publicMetadata as Record<string, unknown>);
+  return { userId, role };
 }
 
 /** Redirect to /proposals if the user doesn't have the required role. */
