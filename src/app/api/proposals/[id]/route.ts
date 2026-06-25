@@ -120,7 +120,7 @@ export async function PATCH(
   const body = await request.json();
   const {
     title, clientName, clientEmail, clientAbn,
-    content, status, expiresAt, internalNotes,
+    content, status, expiresAt, internalNotes, lostReason,
     // Legacy fields (still accepted for backward compat)
     pricingData: legacyPricingData,
     pricingSettings: legacyPricingSettings,
@@ -177,6 +177,7 @@ export async function PATCH(
       ...(totalValue    !== undefined && { totalValue }),
       ...(expiresAt     !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null }),
       ...(internalNotes !== undefined && { internalNotes }),
+      ...(lostReason    !== undefined && { lostReason }),
       // Update flat currency column from first pricing block (for reporting)
       ...(ps && {
         currency:    ps.currency,

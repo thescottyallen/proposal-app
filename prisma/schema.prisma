@@ -14,7 +14,7 @@ enum ProposalStatus {
   SENT
   VIEWED
   ACCEPTED
-  DECLINED
+  LOST
   EXPIRED
 }
 
@@ -139,6 +139,7 @@ model Proposal {
   // Admin
   invoiceNumber String?        @unique @map("invoice_number") // assigned on send
   internalNotes String?        @map("internal_notes")         // never visible to client
+  lostReason    String?        @map("lost_reason")            // why the deal was lost (optional)
   publicId      String         @unique @map("public_id")
   expiresAt     DateTime?      @map("expires_at")
 

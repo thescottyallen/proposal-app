@@ -5,6 +5,7 @@ import {
   sendAcceptanceConfirmationToClient,
   sendAcceptanceNotificationToOwner,
 } from "@/lib/email";
+import { roleFromMetadata } from "@/lib/roles";
 import {
   isProposalDocument,
   applyClientChoices,
@@ -140,16 +141,34 @@ export async function POST(
       customMessage:  biz?.acceptanceEmailMessage ?? undefined,
     });
 
-    if (ownerEmail) {
+    // Notify the proposal owner AND every admin, deduplicated by email, so an
+    // acceptance reaches the whole admin team regardless of who authored it.
+    const recipients = new Set<string>();
+    if (ownerEmail) recipients.add(ownerEmail);
+    try {
+      const { data: users } = await client.users.getUserList({ limit: 100 });
+      for (const u of users) {
+        if (roleFromMetadata(u.publicMetadata as Record<string, unknown>) !== "admin") continue;
+        const adminEmail = u.emailAddresses.find(
+          (e) => e.id === u.primaryEmailAddressId
+        )?.emailAddress;
+        if (adminEmail) recipients.add(adminEmail);
+      }
+    } catch (listErr) {
+      console.error("Failed to list admins for acceptance notification:", listErr);
+    }
+
+    const acceptedAtLabel = acceptedAt.toLocaleString("en-AU", { timeZone: "Australia/Sydney" });
+    for (const email of recipients) {
       await sendAcceptanceNotificationToOwner({
-        ownerEmail,
+        ownerEmail:    email,
         clientName:    proposal.clientName,
         signerName,
         proposalTitle: proposal.title,
         totalValue:    proposal.totalValue,
         currency:      proposal.currency,
         proposalId:    proposal.id,
-        acceptedAt:    acceptedAt.toLocaleString("en-AU", { timeZone: "Australia/Sydney" }),
+        acceptedAt:    acceptedAtLabel,
       });
     }
   } catch (err) {

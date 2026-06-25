@@ -470,11 +470,11 @@ export function PublicProposalView({ proposal, business }: Props) {
           </p>
         </div>
       )}
-      {proposal.status === "DECLINED" && (
+      {proposal.status === "LOST" && (
         <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg">
           <XCircle size={18} className="text-gray-400 shrink-0" />
           <p className="text-sm text-gray-500">
-            This proposal has been declined.
+            This proposal is no longer active.
           </p>
         </div>
       )}

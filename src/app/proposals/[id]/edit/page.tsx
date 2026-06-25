@@ -6,7 +6,7 @@ import { useRouter, useParams } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import {
   ArrowLeft, Save, Send, Copy, Trash2,
-  BookmarkPlus, Check, Mail, X, Link2, Lock, History,
+  BookmarkPlus, Check, Mail, X, Link2, Lock, History, XCircle, RotateCcw,
 } from "lucide-react";
 import Link from "next/link";
 import { getStatusColor, formatDate } from "@/lib/utils";
@@ -30,6 +30,7 @@ interface ProposalMeta {
   totalValue:     number | null;
   invoiceNumber:  string | null;
   internalNotes:  string | null;
+  lostReason:     string | null;
   expiresAt:      string | null;
   // Legacy flat pricing settings (used for migration only)
   currency:           string;
@@ -122,6 +123,9 @@ export default function EditProposalPage() {
   const [hasChanges, setHasChanges]       = useState(false);
   const [toast, setToast]                 = useState<string | null>(null);
   const [showHistory, setShowHistory]     = useState(false);
+  const [showLostModal, setShowLostModal] = useState(false);
+  const [lostReasonInput, setLostReasonInput] = useState("");
+  const [savingLost, setSavingLost]       = useState(false);
   const [showSaveAsTemplate, setShowSaveAsTemplate] = useState(false);
   const [templateName, setTemplateName]   = useState("");
   const [showSendModal, setShowSendModal] = useState(false);
@@ -238,6 +242,42 @@ export default function EditProposalPage() {
       /* non-fatal — open with whatever we already have */
     }
     setShowHistory(true);
+  };
+
+  const markAsLost = async () => {
+    setSavingLost(true);
+    try {
+      const reason = lostReasonInput.trim() || null;
+      const res = await fetch(`/api/proposals/${id}`, {
+        method:  "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ status: "LOST", lostReason: reason }),
+      });
+      if (!res.ok) { showToast("Failed to mark as lost"); return; }
+      setProposal((prev) => (prev ? { ...prev, status: "LOST", lostReason: reason } : prev));
+      setShowLostModal(false);
+      showToast("Marked as lost");
+    } catch {
+      showToast("Failed to mark as lost");
+    } finally {
+      setSavingLost(false);
+    }
+  };
+
+  const reopenProposal = async () => {
+    if (!confirm("Reopen this proposal? It will be set back to Draft.")) return;
+    try {
+      const res = await fetch(`/api/proposals/${id}`, {
+        method:  "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ status: "DRAFT", lostReason: null }),
+      });
+      if (!res.ok) { showToast("Failed to reopen"); return; }
+      setProposal((prev) => (prev ? { ...prev, status: "DRAFT", lostReason: null } : prev));
+      showToast("Proposal reopened");
+    } catch {
+      showToast("Failed to reopen");
+    }
   };
 
   const handleDuplicate = async () => {
@@ -392,6 +432,16 @@ export default function EditProposalPage() {
         </div>
       )}
 
+      {/* Lost banner */}
+      {proposal.status === "LOST" && (
+        <div className="flex items-center gap-3 px-8 py-3 bg-red-50 border-b border-red-200">
+          <XCircle size={14} className="text-red-600 shrink-0" />
+          <p className="text-sm text-red-700 font-medium">
+            This proposal is marked as lost{proposal.lostReason ? `: ${proposal.lostReason}` : ""}.
+          </p>
+        </div>
+      )}
+
       <div className="flex min-h-full">
         <div className="flex-1 flex flex-col min-h-full overflow-hidden">
           {/* Sticky header */}
@@ -472,6 +522,17 @@ export default function EditProposalPage() {
                 <BookmarkPlus size={12} />
                 Save as Template
               </button>
+              {!isAccepted && (proposal.status === "LOST" ? (
+                <button onClick={reopenProposal} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">
+                  <RotateCcw size={12} />
+                  Reopen
+                </button>
+              ) : (
+                <button onClick={() => { setLostReasonInput(proposal.lostReason ?? ""); setShowLostModal(true); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-600 border border-red-200 rounded-md hover:bg-red-50">
+                  <XCircle size={12} />
+                  Mark as Lost
+                </button>
+              ))}
               <div className="ml-auto flex items-center gap-2">
                 <button onClick={openHistory} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">
                   <History size={12} />
@@ -683,6 +744,43 @@ export default function EditProposalPage() {
               >
                 <Send size={14} />
                 {followUpSending ? "Sending..." : "Send Follow-up"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Mark-as-lost modal */}
+      {showLostModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/20" onClick={() => setShowLostModal(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div className="flex items-center gap-2">
+                <XCircle size={18} className="text-red-600" />
+                <h2 className="text-sm font-semibold text-gray-900">Mark as lost</h2>
+              </div>
+              <button onClick={() => setShowLostModal(false)} className="p-1 text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <p className="text-xs text-gray-500">Add an optional note about why this proposal was lost.</p>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Reason (optional)</label>
+                <textarea
+                  value={lostReasonInput}
+                  onChange={(e) => setLostReasonInput(e.target.value)}
+                  placeholder="e.g. went with a competitor, no budget, timing..."
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-200">
+              <button onClick={() => setShowLostModal(false)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button onClick={markAsLost} disabled={savingLost} className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50">
+                <XCircle size={14} />
+                {savingLost ? "Saving..." : "Mark as lost"}
               </button>
             </div>
           </div>
