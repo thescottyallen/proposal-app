@@ -23,6 +23,7 @@ export interface PricingItem {
   unitPrice:      number;        // in proposal currency
   isOptional:     boolean;       // client can include/exclude
   clientIncluded: boolean;       // client's choice; true by default; updated on acceptance
+  optionGroup:    string | null; // non-null = one of several mutually-exclusive "choose one" options sharing this label; only the selected one counts toward totals
   margin:         number;        // percentage, internal only — stripped before client render
   gstApplicable:  boolean;       // whether GST applies to this line (only relevant if gstEnabled)
   discountType:   DiscountType | null;
@@ -55,6 +56,7 @@ export interface PricingTotals {
   gstAmount:           number;
   depositAmount:       number;
   grandTotal:          number;
+  hasUnresolvedOptions: boolean; // true if any option group has no selection yet (client must choose)
 }
 
 // ─── Proposal settings types (mirror Prisma enums) ───────────────────────────
@@ -108,6 +110,7 @@ export function defaultPricingItem(overrides?: Partial<PricingItem>): PricingIte
     unitPrice:      0,
     isOptional:     false,
     clientIncluded: true,
+    optionGroup:    null,
     margin:         0,
     gstApplicable:  true,
     discountType:   null,

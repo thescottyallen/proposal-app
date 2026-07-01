@@ -9,9 +9,11 @@ import { roleFromMetadata } from "@/lib/roles";
 import {
   isProposalDocument,
   applyClientChoices,
+  getAllPricingBlocks,
   ProposalDocument,
 } from "@/lib/proposal-document";
 import type { ProposalPricingData } from "@/lib/pricing-types";
+import { computePricingTotals } from "@/lib/utils";
 
 // POST /api/proposals/:id/accept — public endpoint, no auth required
 // Body: { signerName: string, clientIncluded: Record<string, boolean> }
@@ -63,6 +65,7 @@ export async function POST(
   const rawContent = proposal.content as Record<string, unknown>;
   let contentUpdate: Record<string, unknown> | undefined;
   let pricingDataUpdate: object | undefined;
+  let totalValueUpdate: number | undefined;
 
   if (isProposalDocument(rawContent)) {
     // New format: update clientIncluded within the document's pricing blocks
@@ -71,6 +74,13 @@ export async function POST(
       clientIncluded
     );
     contentUpdate = updatedDoc as unknown as Record<string, unknown>;
+    // Recompute the accepted total from the client's final choices (so a chosen
+    // payment option, not the sum of alternatives, is what gets recorded).
+    let sum = 0;
+    for (const block of getAllPricingBlocks(updatedDoc)) {
+      sum += computePricingTotals(block.pricingData, block.pricingSettings).grandTotal ?? 0;
+    }
+    totalValueUpdate = sum;
   } else {
     // Legacy format: update the separate pricingData column
     const existingPricing = proposal.pricingData as ProposalPricingData | null;
@@ -93,6 +103,7 @@ export async function POST(
       status: "ACCEPTED",
       ...(contentUpdate    && { content:     contentUpdate as object }),
       ...(pricingDataUpdate && { pricingData: pricingDataUpdate }),
+      ...(totalValueUpdate !== undefined && { totalValue: totalValueUpdate }),
     },
   });
 

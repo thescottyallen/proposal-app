@@ -16,6 +16,9 @@ import {
   isProposalDocument,
   stripDocumentInternalFields,
   applyClientChoices,
+  clearOptionSelections,
+  selectOption,
+  allOptionGroupsResolved,
 } from "@/lib/proposal-document";
 import type { ProposalPricingSettings } from "@/lib/pricing-types";
 import { formatDate } from "@/lib/utils";
@@ -304,7 +307,7 @@ function ProposalSidebar({
 export function PublicProposalView({ proposal, business }: Props) {
   // Resolve the ProposalDocument (migrate legacy if needed)
   const rawContent = proposal.content as Record<string, unknown>;
-  const initialDoc: ProposalDocument = isProposalDocument(rawContent)
+  const resolvedDoc: ProposalDocument = isProposalDocument(rawContent)
     ? stripDocumentInternalFields(rawContent)
     : stripDocumentInternalFields(
         migrateToDocument(
@@ -313,6 +316,9 @@ export function PublicProposalView({ proposal, business }: Props) {
           legacyPricingSettings(proposal)
         )
       );
+  // Start every choose-one option group unselected so the client actively picks
+  // one and no combined total shows until they do.
+  const initialDoc: ProposalDocument = clearOptionSelections(resolvedDoc);
 
   const [doc, setDoc] = useState<ProposalDocument>(initialDoc);
   const [activePageId, setActivePageId] = useState<string>(
@@ -341,6 +347,14 @@ export function PublicProposalView({ proposal, business }: Props) {
     []
   );
 
+  // Client chooses one option within a group (clears the group's alternatives)
+  const handleSelectOption = useCallback(
+    (blockId: string, itemId: string) => {
+      setDoc((prev) => selectOption(prev, blockId, itemId));
+    },
+    []
+  );
+
   // Build flat clientIncluded map across all pricing blocks for submission
   const buildClientIncluded = (): Record<string, boolean> => {
     const map: Record<string, boolean> = {};
@@ -348,7 +362,7 @@ export function PublicProposalView({ proposal, business }: Props) {
       for (const block of page.blocks) {
         if (block.type === "pricing") {
           for (const item of block.pricingData.items) {
-            if (item.isOptional) map[item.id] = item.clientIncluded;
+            if (item.isOptional || item.optionGroup) map[item.id] = item.clientIncluded;
           }
         }
       }
@@ -360,6 +374,9 @@ export function PublicProposalView({ proposal, business }: Props) {
     signerName: string,
     _extraIncluded: Record<string, boolean>
   ) => {
+    if (!allOptionGroupsResolved(doc)) {
+      throw new Error("Please choose an option where a choice is offered before accepting.");
+    }
     const res = await fetch(`/api/proposals/${proposal.id}/accept`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
@@ -404,6 +421,11 @@ export function PublicProposalView({ proposal, business }: Props) {
             isAcceptable
               ? (itemId, included) =>
                   handleClientIncludedChange(block.id, itemId, included)
+              : undefined
+          }
+          onSelectOption={
+            isAcceptable
+              ? (itemId) => handleSelectOption(block.id, itemId)
               : undefined
           }
           backgroundColor={block.backgroundColor}

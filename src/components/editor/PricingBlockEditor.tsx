@@ -20,6 +20,7 @@ interface PricingBlockEditorProps {
   clientView?: boolean;
   gstRegistered?: boolean;
   onClientIncludedChange?: (itemId: string, included: boolean) => void;
+  onSelectOption?: (itemId: string) => void;
   backgroundColor?: string;
 }
 
@@ -30,6 +31,7 @@ export function PricingBlockEditor({
   clientView = false,
   gstRegistered = false,
   onClientIncludedChange,
+  onSelectOption,
   backgroundColor,
 }: PricingBlockEditorProps) {
   const [fetchingRate, setFetchingRate] = useState(false);
@@ -70,10 +72,10 @@ export function PricingBlockEditor({
     >
       <div className="px-6 py-5">
         {clientView &&
-          block.pricingData.items.some((i) => i.isOptional) && (
+          block.pricingData.items.some((i) => i.isOptional || i.optionGroup) && (
             <p className="text-xs text-gray-400 mb-4">
-              Items marked as optional can be included or excluded before
-              accepting.
+              Optional items can be included or excluded, and where options are
+              offered you can choose one, before accepting.
             </p>
           )}
         <PricingTable
@@ -81,6 +83,7 @@ export function PricingBlockEditor({
           pricingSettings={block.pricingSettings}
           onChange={handleDataChange}
           onClientIncludedChange={onClientIncludedChange}
+          onSelectOption={onSelectOption}
           readOnly={readOnly}
           clientView={clientView}
         />
