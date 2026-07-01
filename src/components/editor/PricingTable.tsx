@@ -38,6 +38,7 @@ interface PricingTableProps {
   pricingSettings: ProposalPricingSettings;
   onChange:        (data: ProposalPricingData) => void;
   onClientIncludedChange?: (itemId: string, included: boolean) => void; // client view only
+  onSelectOption?: (itemId: string) => void; // client view: pick one option within a group
   readOnly?:       boolean;
   clientView?:     boolean; // public proposal view — shows optional toggles, hides margin
 }
@@ -49,6 +50,7 @@ export function PricingTable({
   pricingSettings,
   onChange,
   onClientIncludedChange,
+  onSelectOption,
   readOnly    = false,
   clientView  = false,
 }: PricingTableProps) {
@@ -68,6 +70,33 @@ export function PricingTable({
 
   const removeItem = useCallback((id: string) => {
     onChange({ ...pricingData, items: items.filter(item => item.id !== id) });
+  }, [pricingData, items, onChange]);
+
+  // Assign/clear an item's option group (editor). Grouped items are choose-one
+  // alternatives, so they are not also "optional" add-ons.
+  const setOptionGroup = useCallback((id: string, group: string) => {
+    const g = group.trim();
+    onChange({
+      ...pricingData,
+      items: items.map(item =>
+        item.id === id
+          ? { ...item, optionGroup: g || null, isOptional: g ? false : item.isOptional }
+          : item
+      ),
+    });
+  }, [pricingData, items, onChange]);
+
+  // Mark an item as the default selected option within its group (editor).
+  const setDefaultOption = useCallback((id: string) => {
+    const target = items.find(i => i.id === id);
+    const group = target?.optionGroup ?? null;
+    if (!group) return;
+    onChange({
+      ...pricingData,
+      items: items.map(item =>
+        item.optionGroup === group ? { ...item, clientIncluded: item.id === id } : item
+      ),
+    });
   }, [pricingData, items, onChange]);
 
   const addItem = useCallback((sectionId: string | null) => {
@@ -155,6 +184,9 @@ export function PricingTable({
             onUpdate={updateItem}
             onRemove={removeItem}
             onClientIncludedChange={onClientIncludedChange}
+            onSelectOption={onSelectOption}
+            setOptionGroup={setOptionGroup}
+            setDefaultOption={setDefaultOption}
           />
         ))}
 
@@ -207,6 +239,9 @@ export function PricingTable({
                 onUpdate={updateItem}
                 onRemove={removeItem}
                 onClientIncludedChange={onClientIncludedChange}
+            onSelectOption={onSelectOption}
+            setOptionGroup={setOptionGroup}
+            setDefaultOption={setDefaultOption}
                 indented
               />
             ))}
@@ -260,17 +295,21 @@ interface ItemRowProps {
   onUpdate:   (id: string, patch: Partial<PricingItem>) => void;
   onRemove:   (id: string) => void;
   onClientIncludedChange?: (id: string, included: boolean) => void;
+  onSelectOption?: (id: string) => void;
+  setOptionGroup?: (id: string, group: string) => void;
+  setDefaultOption?: (id: string) => void;
   indented?:  boolean;
 }
 
 function ItemRow({
   item, totals, readOnly, clientView, showGstCol, showMargin,
-  fmt, onUpdate, onRemove, onClientIncludedChange, indented = false,
+  fmt, onUpdate, onRemove, onClientIncludedChange,
+  onSelectOption, setOptionGroup, setDefaultOption, indented = false,
 }: ItemRowProps) {
   const lineTotal = totals.lines.find(l => l.itemId === item.id);
   const total     = lineTotal?.total ?? applyRounding(item.quantity * item.unitPrice, "CENTS");
   const cfg       = lineTypeConfig(item.type);
-  const dimmed    = clientView && item.isOptional && !item.clientIncluded;
+  const dimmed    = clientView && !item.clientIncluded && (item.isOptional || !!item.optionGroup);
 
   const rowStyle: CSSProperties = { opacity: dimmed ? 0.4 : 1 };
 
@@ -413,10 +452,18 @@ function ItemRow({
           </div>
         )}
 
-        {/* Client include toggle (client view for optional items) */}
+        {/* Client select/include toggle (client view) */}
         {clientView && (
           <div className="px-2 py-2.5 flex items-start justify-center pt-3">
-            {item.isOptional ? (
+            {item.optionGroup ? (
+              <input
+                type="radio"
+                name={`opt-${item.optionGroup}`}
+                checked={item.clientIncluded}
+                onChange={() => onSelectOption?.(item.id)}
+                className="w-4 h-4 border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            ) : item.isOptional ? (
               <input
                 type="checkbox"
                 checked={item.clientIncluded}
@@ -438,9 +485,12 @@ function ItemRow({
               -{item.discountType === "percentage" ? `${item.discountValue}%` : fmt(item.discountValue)}
             </p>
           )}
-          {/* Optional label */}
+          {/* Optional / option-group label */}
           {item.isOptional && !clientView && (
             <p className="text-xs text-blue-500 mt-0.5">optional</p>
+          )}
+          {item.optionGroup && !clientView && (
+            <p className="text-xs text-blue-500 mt-0.5">option: {item.optionGroup}</p>
           )}
         </div>
 
@@ -457,18 +507,44 @@ function ItemRow({
         )}
       </div>
 
-      {/* Optional + discount controls row (editor only) */}
+      {/* Optional / option-group + discount controls row (editor only) */}
       {!readOnly && !clientView && (
-        <div className="flex items-center gap-4 px-3 pb-2 pl-9">
-          <label className="flex items-center gap-1.5 cursor-pointer">
+        <div className="flex flex-wrap items-center gap-4 px-3 pb-2 pl-9">
+          {!item.optionGroup && (
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={item.isOptional}
+                onChange={e => onUpdate(item.id, { isOptional: e.target.checked, clientIncluded: !e.target.checked ? true : item.clientIncluded })}
+                className="w-3 h-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-xs text-gray-400">Optional</span>
+            </label>
+          )}
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-400">Option group:</span>
             <input
-              type="checkbox"
-              checked={item.isOptional}
-              onChange={e => onUpdate(item.id, { isOptional: e.target.checked, clientIncluded: !e.target.checked ? true : item.clientIncluded })}
-              className="w-3 h-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              type="text"
+              value={item.optionGroup ?? ""}
+              onChange={e => setOptionGroup?.(item.id, e.target.value)}
+              placeholder="none"
+              title="Give two or more lines the same label to make them a choose-one set"
+              className="w-32 text-xs border-b border-gray-200 bg-transparent focus:outline-none focus:ring-0 p-0 text-gray-500 placeholder-gray-300"
             />
-            <span className="text-xs text-gray-400">Optional</span>
-          </label>
+          </div>
+
+          {item.optionGroup && (
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={item.clientIncluded}
+                onChange={() => setDefaultOption?.(item.id)}
+                className="w-3 h-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-xs text-gray-400">Default</span>
+            </label>
+          )}
 
           <LineDiscountControl item={item} onUpdate={onUpdate} />
         </div>
@@ -550,6 +626,25 @@ function TotalsFooter({
   const hasProposalDiscount = discountType && discountValue != null && discountValue > 0;
   const hasDeposit          = depositType && depositValue != null && depositValue > 0;
   const hasSections         = sections.length > 0;
+
+  // When a choose-one option group has no selection yet, do not show a combined
+  // total (this is the fix for alternative options being summed together).
+  if (totals.hasUnresolvedOptions) {
+    return (
+      <div className="bg-gray-50 border-t-2 border-gray-200 py-3 px-4">
+        <p className="text-sm text-gray-500">
+          {clientView
+            ? "Select an option above to see your total."
+            : "Mark a default option to see the total."}
+        </p>
+        {paymentTerms && !clientView && (
+          <span className="text-xs text-gray-400">
+            Payment due: {paymentTermsLabel(paymentTerms)}
+          </span>
+        )}
+      </div>
+    );
+  }
 
   function TotalRow({ label, value, bold, highlight, small, color }: {
     label: string; value: string; bold?: boolean; highlight?: boolean; small?: boolean; color?: string;

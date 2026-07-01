@@ -83,11 +83,10 @@ export function computePricingTotals(
   clientView:  boolean = false
 ): PricingTotals {
   const mode = settings.roundingMode;
-  const activeItems: PricingItem[] = clientView
-    ? pricingData.items.filter(item => !item.isOptional || item.clientIncluded)
-    : pricingData.items;
 
-  const lines: LineTotal[] = activeItems.map(item => {
+  // Per-line totals for EVERY item, so each option can show its own price even
+  // when it is not the currently selected one.
+  const lines: LineTotal[] = pricingData.items.map(item => {
     const subtotal      = applyRounding(item.quantity * item.unitPrice, mode);
     const discountAmount = applyRounding(calcLineDiscount(subtotal, item.discountType, item.discountValue), mode);
     const afterDiscount = applyRounding(subtotal - discountAmount, mode);
@@ -104,17 +103,49 @@ export function computePricingTotals(
     };
   });
 
-  // Section subtotals (after line discounts, before proposal discount, before GST)
+  // Decide which items count toward the totals.
+  //  - Ungrouped items keep the existing behaviour: in client view, optional
+  //    items the client unticked are excluded; in the editor everything counts.
+  //  - Option-group items are mutually exclusive "choose one" alternatives: only
+  //    the selected one counts and alternatives are never summed. If none is
+  //    selected the group is unresolved and contributes nothing until a choice is
+  //    made (this is what stops alternative payment options being added together).
+  const optionGroups = new Map<string, PricingItem[]>();
+  for (const item of pricingData.items) {
+    if (item.optionGroup) {
+      const arr = optionGroups.get(item.optionGroup) ?? [];
+      arr.push(item);
+      optionGroups.set(item.optionGroup, arr);
+    }
+  }
+
+  const countedIds = new Set<string>();
+  for (const item of pricingData.items) {
+    if (item.optionGroup) continue;
+    const include = clientView ? (!item.isOptional || item.clientIncluded) : true;
+    if (include) countedIds.add(item.id);
+  }
+  let hasUnresolvedOptions = false;
+  for (const members of optionGroups.values()) {
+    const selected = members.find(m => m.clientIncluded);
+    if (selected) countedIds.add(selected.id);
+    else hasUnresolvedOptions = true;
+  }
+
+  const countedLines = lines.filter(l => countedIds.has(l.itemId));
+
+  // Section subtotals (counted items only; after line discounts, before GST)
   const sectionSubtotals: Record<string, number> = {};
-  activeItems.forEach((item, i) => {
-    if (item.sectionId) {
+  pricingData.items.forEach(item => {
+    if (item.sectionId && countedIds.has(item.id)) {
+      const line = lines.find(l => l.itemId === item.id);
       sectionSubtotals[item.sectionId] =
-        applyRounding((sectionSubtotals[item.sectionId] ?? 0) + lines[i].afterDiscount, mode);
+        applyRounding((sectionSubtotals[item.sectionId] ?? 0) + (line?.afterDiscount ?? 0), mode);
     }
   });
 
   const subtotalBeforeDiscount = applyRounding(
-    lines.reduce((sum, l) => sum + l.afterDiscount, 0),
+    countedLines.reduce((sum, l) => sum + l.afterDiscount, 0),
     mode
   );
 
@@ -125,8 +156,8 @@ export function computePricingTotals(
   );
   const subtotalAfterDiscount = applyRounding(subtotalBeforeDiscount - proposalDiscountAmount, mode);
 
-  // GST is applied per-line above; sum it up here for the subtotal row
-  const gstAmount = applyRounding(lines.reduce((sum, l) => sum + l.gstAmount, 0), mode);
+  // GST is applied per-line above; sum the counted lines here for the subtotal row
+  const gstAmount = applyRounding(countedLines.reduce((sum, l) => sum + l.gstAmount, 0), mode);
 
   // Deposit
   let depositAmount = 0;
@@ -148,6 +179,7 @@ export function computePricingTotals(
     gstAmount,
     depositAmount,
     grandTotal,
+    hasUnresolvedOptions,
   };
 }
 

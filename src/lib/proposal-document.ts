@@ -332,9 +332,12 @@ export function applyClientChoices(
             ...block.pricingData,
             items: block.pricingData.items.map((item) => ({
               ...item,
-              clientIncluded: item.isOptional
-                ? (clientIncluded[item.id] ?? item.clientIncluded)
-                : true,
+              clientIncluded:
+                item.optionGroup
+                  ? (clientIncluded[item.id] ?? item.clientIncluded)
+                  : item.isOptional
+                    ? (clientIncluded[item.id] ?? item.clientIncluded)
+                    : true,
             })),
           },
         };
@@ -354,4 +357,84 @@ export function getOptionalItemMap(
     }
   }
   return map;
+}
+
+// ─── Option groups (mutually-exclusive "choose one" pricing) ──────────────────
+
+/**
+ * Clear every option-group selection so the client actively picks one.
+ * Used on the public view so no combined total shows until a choice is made.
+ */
+export function clearOptionSelections(doc: ProposalDocument): ProposalDocument {
+  return {
+    ...doc,
+    pages: doc.pages.map((page) => ({
+      ...page,
+      blocks: page.blocks.map((block) => {
+        if (block.type !== "pricing") return block;
+        return {
+          ...block,
+          pricingData: {
+            ...block.pricingData,
+            items: block.pricingData.items.map((item) =>
+              item.optionGroup ? { ...item, clientIncluded: false } : item
+            ),
+          },
+        };
+      }),
+    })),
+  };
+}
+
+/**
+ * Select one option within its group (scoped to a block), clearing its
+ * group-mates so exactly one alternative is ever selected.
+ */
+export function selectOption(
+  doc: ProposalDocument,
+  blockId: string,
+  itemId: string
+): ProposalDocument {
+  return {
+    ...doc,
+    pages: doc.pages.map((page) => ({
+      ...page,
+      blocks: page.blocks.map((block) => {
+        if (block.type !== "pricing" || block.id !== blockId) return block;
+        const chosen = block.pricingData.items.find((i) => i.id === itemId);
+        const group = chosen?.optionGroup ?? null;
+        if (!group) return block;
+        return {
+          ...block,
+          pricingData: {
+            ...block.pricingData,
+            items: block.pricingData.items.map((item) =>
+              item.optionGroup === group
+                ? { ...item, clientIncluded: item.id === itemId }
+                : item
+            ),
+          },
+        };
+      }),
+    })),
+  };
+}
+
+/** True only if every option group in the document has exactly one selection. */
+export function allOptionGroupsResolved(doc: ProposalDocument): boolean {
+  for (const block of getAllPricingBlocks(doc)) {
+    const counts = new Map<string, number>();
+    for (const item of block.pricingData.items) {
+      if (item.optionGroup) {
+        counts.set(
+          item.optionGroup,
+          (counts.get(item.optionGroup) ?? 0) + (item.clientIncluded ? 1 : 0)
+        );
+      }
+    }
+    for (const count of counts.values()) {
+      if (count !== 1) return false;
+    }
+  }
+  return true;
 }
