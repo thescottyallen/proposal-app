@@ -72,10 +72,12 @@ export function PricingBlockEditor({
     >
       <div className="px-6 py-5">
         {clientView &&
-          block.pricingData.items.some((i) => i.isOptional || i.optionGroup) && (
+          (block.pricingSettings.optionsMode ||
+            block.pricingData.items.some((i) => i.isOptional)) && (
             <p className="text-xs text-gray-400 mb-4">
-              Optional items can be included or excluded, and where options are
-              offered you can choose one, before accepting.
+              {block.pricingSettings.optionsMode
+                ? "Choose one of the options below before accepting."
+                : "Optional items can be included or excluded before accepting."}
             </p>
           )}
         <PricingTable

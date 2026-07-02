@@ -23,7 +23,6 @@ export interface PricingItem {
   unitPrice:      number;        // in proposal currency
   isOptional:     boolean;       // client can include/exclude
   clientIncluded: boolean;       // client's choice; true by default; updated on acceptance
-  optionGroup:    string | null; // non-null = one of several mutually-exclusive "choose one" options sharing this label; only the selected one counts toward totals
   margin:         number;        // percentage, internal only — stripped before client render
   gstApplicable:  boolean;       // whether GST applies to this line (only relevant if gstEnabled)
   discountType:   DiscountType | null;
@@ -72,6 +71,7 @@ export interface ProposalPricingSettings {
   exchangeRate:       number;
   gstEnabled:         boolean;
   roundingMode:       RoundingMode;
+  optionsMode:        boolean; // when true, this block's lines are choose-one alternatives; no total shows until the client selects one
   discountType:       DiscountType | null;
   discountValue:      number | null;
   showDiscount:       boolean;
@@ -110,7 +110,6 @@ export function defaultPricingItem(overrides?: Partial<PricingItem>): PricingIte
     unitPrice:      0,
     isOptional:     false,
     clientIncluded: true,
-    optionGroup:    null,
     margin:         0,
     gstApplicable:  true,
     discountType:   null,
@@ -133,6 +132,7 @@ export function defaultPricingSettings(): ProposalPricingSettings {
     exchangeRate:       1.0,
     gstEnabled:         false,
     roundingMode:       "CENTS",
+    optionsMode:        false,
     discountType:       null,
     discountValue:      null,
     showDiscount:       true,

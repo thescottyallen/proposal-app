@@ -48,6 +48,7 @@ export function PricingSettingsPanel({
         <div className="flex items-center gap-2 text-xs text-gray-400">
           <span>
             {settings.currency}
+            {settings.optionsMode ? " · Options" : ""}
             {settings.gstEnabled ? " · GST" : ""}
             {settings.billingCadence !== "ONE_OFF" ? ` · ${settings.billingCadence === "MONTHLY" ? "Monthly" : "Quarterly"}` : ""}
             {settings.discountType ? " · Discount" : ""}
@@ -58,6 +59,24 @@ export function PricingSettingsPanel({
 
       {open && (
         <div className="px-4 py-4 bg-white space-y-5">
+
+          {/* Options mode — present this block's lines as choose-one alternatives */}
+          <div>
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.optionsMode}
+                onChange={e => update({ optionsMode: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <div>
+                <p className="text-sm text-gray-700">Client chooses one line (options)</p>
+                <p className="text-xs text-gray-400">Shows each line as a choose-one option with a radio button. No total is shown until the client picks one.</p>
+              </div>
+            </label>
+          </div>
+
+          <hr className="border-gray-100" />
 
           {/* Currency */}
           <div className="grid grid-cols-2 gap-4">
