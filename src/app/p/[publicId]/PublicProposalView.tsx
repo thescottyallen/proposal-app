@@ -100,6 +100,7 @@ function legacyPricingSettings(p: ProposalProps): ProposalPricingSettings {
     exchangeRate:       p.exchangeRate,
     gstEnabled:         p.gstEnabled,
     roundingMode:       p.roundingMode       as ProposalPricingSettings["roundingMode"],
+    optionsMode:        false,
     discountType:       p.discountType       as ProposalPricingSettings["discountType"],
     discountValue:      p.discountValue,
     showDiscount:       p.showDiscount,
@@ -361,8 +362,9 @@ export function PublicProposalView({ proposal, business }: Props) {
     for (const page of doc.pages) {
       for (const block of page.blocks) {
         if (block.type === "pricing") {
+          const optionsMode = block.pricingSettings.optionsMode;
           for (const item of block.pricingData.items) {
-            if (item.isOptional || item.optionGroup) map[item.id] = item.clientIncluded;
+            if (optionsMode || item.isOptional) map[item.id] = item.clientIncluded;
           }
         }
       }

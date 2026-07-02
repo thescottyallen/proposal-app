@@ -2,7 +2,6 @@ import { v4 as uuidv4 } from "uuid";
 import type {
   Currency,
   RoundingMode,
-  PricingItem,
   ProposalPricingData,
   ProposalPricingSettings,
   PricingTotals,
@@ -103,35 +102,36 @@ export function computePricingTotals(
     };
   });
 
-  // Decide which items count toward the totals.
-  //  - Ungrouped items keep the existing behaviour: in client view, optional
-  //    items the client unticked are excluded; in the editor everything counts.
-  //  - Option-group items are mutually exclusive "choose one" alternatives: only
-  //    the selected one counts and alternatives are never summed. If none is
-  //    selected the group is unresolved and contributes nothing until a choice is
-  //    made (this is what stops alternative payment options being added together).
-  const optionGroups = new Map<string, PricingItem[]>();
-  for (const item of pricingData.items) {
-    if (item.optionGroup) {
-      const arr = optionGroups.get(item.optionGroup) ?? [];
-      arr.push(item);
-      optionGroups.set(item.optionGroup, arr);
-    }
+  // OPTIONS MODE: the block's lines are mutually-exclusive alternatives. Only the
+  // line the client has selected counts, and no combined total is shown until they
+  // choose (the UI keys off hasUnresolvedOptions). This is the "choose one" case
+  // that stops alternative payment options being added together.
+  if (settings.optionsMode) {
+    const selected = pricingData.items.find(i => i.clientIncluded);
+    const selLine  = selected ? lines.find(l => l.itemId === selected.id) : undefined;
+    const afterDiscount = selLine?.afterDiscount ?? 0;
+    const gst           = selLine?.gstAmount ?? 0;
+    return {
+      lines,
+      sectionSubtotals: {},
+      subtotalBeforeDiscount: afterDiscount,
+      proposalDiscountAmount: 0,
+      subtotalAfterDiscount:  afterDiscount,
+      gstAmount:  gst,
+      depositAmount: 0,
+      grandTotal: applyRounding(afterDiscount + gst, mode),
+      hasUnresolvedOptions: !selected,
+    };
   }
 
+  // NORMAL MODE: in client view, exclude optional items the client unticked; in
+  // the editor everything counts.
   const countedIds = new Set<string>();
   for (const item of pricingData.items) {
-    if (item.optionGroup) continue;
     const include = clientView ? (!item.isOptional || item.clientIncluded) : true;
     if (include) countedIds.add(item.id);
   }
-  let hasUnresolvedOptions = false;
-  for (const members of optionGroups.values()) {
-    const selected = members.find(m => m.clientIncluded);
-    if (selected) countedIds.add(selected.id);
-    else hasUnresolvedOptions = true;
-  }
-
+  const hasUnresolvedOptions = false;
   const countedLines = lines.filter(l => countedIds.has(l.itemId));
 
   // Section subtotals (counted items only; after line discounts, before GST)

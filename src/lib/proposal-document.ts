@@ -332,12 +332,11 @@ export function applyClientChoices(
             ...block.pricingData,
             items: block.pricingData.items.map((item) => ({
               ...item,
-              clientIncluded:
-                item.optionGroup
+              clientIncluded: block.pricingSettings.optionsMode
+                ? (clientIncluded[item.id] ?? item.clientIncluded)
+                : item.isOptional
                   ? (clientIncluded[item.id] ?? item.clientIncluded)
-                  : item.isOptional
-                    ? (clientIncluded[item.id] ?? item.clientIncluded)
-                    : true,
+                  : true,
             })),
           },
         };
@@ -371,14 +370,15 @@ export function clearOptionSelections(doc: ProposalDocument): ProposalDocument {
     pages: doc.pages.map((page) => ({
       ...page,
       blocks: page.blocks.map((block) => {
-        if (block.type !== "pricing") return block;
+        if (block.type !== "pricing" || !block.pricingSettings.optionsMode) return block;
         return {
           ...block,
           pricingData: {
             ...block.pricingData,
-            items: block.pricingData.items.map((item) =>
-              item.optionGroup ? { ...item, clientIncluded: false } : item
-            ),
+            items: block.pricingData.items.map((item) => ({
+              ...item,
+              clientIncluded: false,
+            })),
           },
         };
       }),
@@ -401,18 +401,15 @@ export function selectOption(
       ...page,
       blocks: page.blocks.map((block) => {
         if (block.type !== "pricing" || block.id !== blockId) return block;
-        const chosen = block.pricingData.items.find((i) => i.id === itemId);
-        const group = chosen?.optionGroup ?? null;
-        if (!group) return block;
+        if (!block.pricingSettings.optionsMode) return block;
         return {
           ...block,
           pricingData: {
             ...block.pricingData,
-            items: block.pricingData.items.map((item) =>
-              item.optionGroup === group
-                ? { ...item, clientIncluded: item.id === itemId }
-                : item
-            ),
+            items: block.pricingData.items.map((item) => ({
+              ...item,
+              clientIncluded: item.id === itemId,
+            })),
           },
         };
       }),
@@ -423,18 +420,9 @@ export function selectOption(
 /** True only if every option group in the document has exactly one selection. */
 export function allOptionGroupsResolved(doc: ProposalDocument): boolean {
   for (const block of getAllPricingBlocks(doc)) {
-    const counts = new Map<string, number>();
-    for (const item of block.pricingData.items) {
-      if (item.optionGroup) {
-        counts.set(
-          item.optionGroup,
-          (counts.get(item.optionGroup) ?? 0) + (item.clientIncluded ? 1 : 0)
-        );
-      }
-    }
-    for (const count of counts.values()) {
-      if (count !== 1) return false;
-    }
+    if (!block.pricingSettings.optionsMode) continue;
+    const selectedCount = block.pricingData.items.filter((i) => i.clientIncluded).length;
+    if (selectedCount !== 1) return false;
   }
   return true;
 }

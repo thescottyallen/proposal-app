@@ -72,33 +72,6 @@ export function PricingTable({
     onChange({ ...pricingData, items: items.filter(item => item.id !== id) });
   }, [pricingData, items, onChange]);
 
-  // Assign/clear an item's option group (editor). Grouped items are choose-one
-  // alternatives, so they are not also "optional" add-ons.
-  const setOptionGroup = useCallback((id: string, group: string) => {
-    const g = group.trim();
-    onChange({
-      ...pricingData,
-      items: items.map(item =>
-        item.id === id
-          ? { ...item, optionGroup: g || null, isOptional: g ? false : item.isOptional }
-          : item
-      ),
-    });
-  }, [pricingData, items, onChange]);
-
-  // Mark an item as the default selected option within its group (editor).
-  const setDefaultOption = useCallback((id: string) => {
-    const target = items.find(i => i.id === id);
-    const group = target?.optionGroup ?? null;
-    if (!group) return;
-    onChange({
-      ...pricingData,
-      items: items.map(item =>
-        item.optionGroup === group ? { ...item, clientIncluded: item.id === id } : item
-      ),
-    });
-  }, [pricingData, items, onChange]);
-
   const addItem = useCallback((sectionId: string | null) => {
     const sectionItems = items.filter(i => i.sectionId === sectionId);
     const order = sectionItems.length > 0 ? Math.max(...sectionItems.map(i => i.order)) + 1 : 0;
@@ -185,8 +158,7 @@ export function PricingTable({
             onRemove={removeItem}
             onClientIncludedChange={onClientIncludedChange}
             onSelectOption={onSelectOption}
-            setOptionGroup={setOptionGroup}
-            setDefaultOption={setDefaultOption}
+            optionsMode={pricingSettings.optionsMode}
           />
         ))}
 
@@ -240,8 +212,7 @@ export function PricingTable({
                 onRemove={removeItem}
                 onClientIncludedChange={onClientIncludedChange}
             onSelectOption={onSelectOption}
-            setOptionGroup={setOptionGroup}
-            setDefaultOption={setDefaultOption}
+            optionsMode={pricingSettings.optionsMode}
                 indented
               />
             ))}
@@ -296,20 +267,19 @@ interface ItemRowProps {
   onRemove:   (id: string) => void;
   onClientIncludedChange?: (id: string, included: boolean) => void;
   onSelectOption?: (id: string) => void;
-  setOptionGroup?: (id: string, group: string) => void;
-  setDefaultOption?: (id: string) => void;
+  optionsMode?: boolean;
   indented?:  boolean;
 }
 
 function ItemRow({
   item, totals, readOnly, clientView, showGstCol, showMargin,
   fmt, onUpdate, onRemove, onClientIncludedChange,
-  onSelectOption, setOptionGroup, setDefaultOption, indented = false,
+  onSelectOption, optionsMode = false, indented = false,
 }: ItemRowProps) {
   const lineTotal = totals.lines.find(l => l.itemId === item.id);
   const total     = lineTotal?.total ?? applyRounding(item.quantity * item.unitPrice, "CENTS");
   const cfg       = lineTypeConfig(item.type);
-  const dimmed    = clientView && !item.clientIncluded && (item.isOptional || !!item.optionGroup);
+  const dimmed    = clientView && !item.clientIncluded && (item.isOptional || optionsMode);
 
   const rowStyle: CSSProperties = { opacity: dimmed ? 0.4 : 1 };
 
@@ -455,10 +425,10 @@ function ItemRow({
         {/* Client select/include toggle (client view) */}
         {clientView && (
           <div className="px-2 py-2.5 flex items-start justify-center pt-3">
-            {item.optionGroup ? (
+            {optionsMode ? (
               <input
                 type="radio"
-                name={`opt-${item.optionGroup}`}
+                name="proposal-option"
                 checked={item.clientIncluded}
                 onChange={() => onSelectOption?.(item.id)}
                 className="w-4 h-4 border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
@@ -489,8 +459,8 @@ function ItemRow({
           {item.isOptional && !clientView && (
             <p className="text-xs text-blue-500 mt-0.5">optional</p>
           )}
-          {item.optionGroup && !clientView && (
-            <p className="text-xs text-blue-500 mt-0.5">option: {item.optionGroup}</p>
+          {optionsMode && !clientView && (
+            <p className="text-xs text-blue-500 mt-0.5">option</p>
           )}
         </div>
 
@@ -507,10 +477,12 @@ function ItemRow({
         )}
       </div>
 
-      {/* Optional / option-group + discount controls row (editor only) */}
+      {/* Optional + discount controls row (editor only) */}
       {!readOnly && !clientView && (
         <div className="flex flex-wrap items-center gap-4 px-3 pb-2 pl-9">
-          {!item.optionGroup && (
+          {optionsMode ? (
+            <span className="text-xs text-blue-500">Choose-one option</span>
+          ) : (
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -519,30 +491,6 @@ function ItemRow({
                 className="w-3 h-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <span className="text-xs text-gray-400">Optional</span>
-            </label>
-          )}
-
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-400">Option group:</span>
-            <input
-              type="text"
-              value={item.optionGroup ?? ""}
-              onChange={e => setOptionGroup?.(item.id, e.target.value)}
-              placeholder="none"
-              title="Give two or more lines the same label to make them a choose-one set"
-              className="w-32 text-xs border-b border-gray-200 bg-transparent focus:outline-none focus:ring-0 p-0 text-gray-500 placeholder-gray-300"
-            />
-          </div>
-
-          {item.optionGroup && (
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={item.clientIncluded}
-                onChange={() => setDefaultOption?.(item.id)}
-                className="w-3 h-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-xs text-gray-400">Default</span>
             </label>
           )}
 
@@ -627,21 +575,28 @@ function TotalsFooter({
   const hasDeposit          = depositType && depositValue != null && depositValue > 0;
   const hasSections         = sections.length > 0;
 
-  // When a choose-one option group has no selection yet, do not show a combined
-  // total (this is the fix for alternative options being summed together).
-  if (totals.hasUnresolvedOptions) {
+  // Options block: never show a summed or default total. Once the client picks an
+  // option, show just that option's total; otherwise show a short note.
+  if (pricingSettings.optionsMode) {
+    if (clientView && !totals.hasUnresolvedOptions) {
+      return (
+        <div className="bg-gray-50 border-t-2 border-gray-200 py-3">
+          <TotalRow
+            label={billingCadence !== "ONE_OFF" ? `Total (${billingCadence === "MONTHLY" ? "monthly" : "quarterly"})` : "Total"}
+            value={fmt(totals.grandTotal)}
+            bold
+            highlight
+          />
+        </div>
+      );
+    }
     return (
       <div className="bg-gray-50 border-t-2 border-gray-200 py-3 px-4">
         <p className="text-sm text-gray-500">
           {clientView
             ? "Select an option above to see your total."
-            : "Mark a default option to see the total."}
+            : "The client chooses one of these options. No total is shown until they select one."}
         </p>
-        {paymentTerms && !clientView && (
-          <span className="text-xs text-gray-400">
-            Payment due: {paymentTermsLabel(paymentTerms)}
-          </span>
-        )}
       </div>
     );
   }
