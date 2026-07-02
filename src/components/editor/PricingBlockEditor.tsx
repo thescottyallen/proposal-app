@@ -80,15 +80,6 @@ export function PricingBlockEditor({
                 : "Optional items can be included or excluded before accepting."}
             </p>
           )}
-        <PricingTable
-          pricingData={block.pricingData}
-          pricingSettings={block.pricingSettings}
-          onChange={handleDataChange}
-          onClientIncludedChange={onClientIncludedChange}
-          onSelectOption={onSelectOption}
-          readOnly={readOnly}
-          clientView={clientView}
-        />
         {!readOnly && !clientView && (
           <PricingSettingsPanel
             settings={block.pricingSettings}
@@ -98,6 +89,15 @@ export function PricingBlockEditor({
             fetchingRate={fetchingRate}
           />
         )}
+        <PricingTable
+          pricingData={block.pricingData}
+          pricingSettings={block.pricingSettings}
+          onChange={handleDataChange}
+          onClientIncludedChange={onClientIncludedChange}
+          onSelectOption={onSelectOption}
+          readOnly={readOnly}
+          clientView={clientView}
+        />
         {clientView && block.pricingSettings.latePaymentClause && (
           <p className="text-xs text-gray-400 mt-4 pt-4 border-t border-gray-100">
             {block.pricingSettings.latePaymentClause}
