@@ -100,6 +100,7 @@ function legacyPricingSettings(p: ProposalProps): ProposalPricingSettings {
     exchangeRate:       p.exchangeRate,
     gstEnabled:         p.gstEnabled,
     roundingMode:       p.roundingMode       as ProposalPricingSettings["roundingMode"],
+    optionsMode:        false,
     discountType:       p.discountType       as ProposalPricingSettings["discountType"],
     discountValue:      p.discountValue,
     showDiscount:       p.showDiscount,
