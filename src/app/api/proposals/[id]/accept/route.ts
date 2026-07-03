@@ -178,8 +178,13 @@ export async function POST(
     }
     console.log(`[accept] notifying ${recipients.size} recipient(s)`);
 
+    // Resend limits sending to ~2 requests/second. The client confirmation was
+    // just sent, so space out each admin notification to stay under the limit
+    // (otherwise all but the first were rejected as "Too many requests").
     const acceptedAtLabel = acceptedAt.toLocaleString("en-AU", { timeZone: "Australia/Sydney" });
+    const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
     for (const email of recipients) {
+      await sleep(600);
       await sendAcceptanceNotificationToOwner({
         ownerEmail:    email,
         clientName:    proposal.clientName,
