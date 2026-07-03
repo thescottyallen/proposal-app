@@ -140,7 +140,7 @@ export function PricingTable({
           {showMargin  && <div className="px-2 py-3 text-right">Margin %</div>}
           {clientView  && <div className="px-2 py-3 text-center">Include</div>}
           <div className="px-3 py-3 text-right">Total</div>
-          {!readOnly   && <div className="px-2 py-3 w-8" />}
+          {!readOnly && !clientView && <div className="px-2 py-3 w-8" />}
         </div>
 
         {/* ── Ungrouped items ── */}
@@ -465,7 +465,7 @@ function ItemRow({
         </div>
 
         {/* Delete (editor only) */}
-        {!readOnly && (
+        {!readOnly && !clientView && (
           <div className="px-1 py-2.5 flex items-start pt-3">
             <button
               onClick={() => onRemove(item.id)}
@@ -668,6 +668,6 @@ function buildGridCols(showGstCol: boolean, showMargin: boolean, readOnly: boole
   if (showMargin)  cols.push("72px");                   // margin
   if (clientView)  cols.push("56px");                   // include toggle
   cols.push("96px");                                     // total
-  if (!readOnly)   cols.push("32px");                   // delete
+  if (!readOnly && !clientView) cols.push("32px");      // delete (editor only)
   return cols.join(" ");
 }
