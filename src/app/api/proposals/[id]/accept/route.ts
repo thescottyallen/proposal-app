@@ -156,18 +156,27 @@ export async function POST(
     // acceptance reaches the whole admin team regardless of who authored it.
     const recipients = new Set<string>();
     if (ownerEmail) recipients.add(ownerEmail);
+    let adminCount = 0;
     try {
       const { data: users } = await client.users.getUserList({ limit: 100 });
+      console.log(`[accept] getUserList returned ${users.length} user(s)`);
       for (const u of users) {
-        if (roleFromMetadata(u.publicMetadata as Record<string, unknown>) !== "admin") continue;
+        const role = roleFromMetadata(u.publicMetadata as Record<string, unknown>);
+        if (role !== "admin") continue;
+        adminCount++;
         const adminEmail = u.emailAddresses.find(
           (e) => e.id === u.primaryEmailAddressId
         )?.emailAddress;
         if (adminEmail) recipients.add(adminEmail);
       }
+      console.log(`[accept] found ${adminCount} admin(s)`);
     } catch (listErr) {
-      console.error("Failed to list admins for acceptance notification:", listErr);
+      console.error(
+        "[accept] getUserList failed:",
+        listErr instanceof Error ? listErr.message : String(listErr)
+      );
     }
+    console.log(`[accept] notifying ${recipients.size} recipient(s)`);
 
     const acceptedAtLabel = acceptedAt.toLocaleString("en-AU", { timeZone: "Australia/Sydney" });
     for (const email of recipients) {
