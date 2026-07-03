@@ -279,7 +279,7 @@ function ItemRow({
   const lineTotal = totals.lines.find(l => l.itemId === item.id);
   const total     = lineTotal?.total ?? applyRounding(item.quantity * item.unitPrice, "CENTS");
   const cfg       = lineTypeConfig(item.type);
-  const dimmed    = clientView && !item.clientIncluded && (item.isOptional || optionsMode);
+  const dimmed    = clientView && item.isOptional && !item.clientIncluded;
 
   const rowStyle: CSSProperties = { opacity: dimmed ? 0.4 : 1 };
 

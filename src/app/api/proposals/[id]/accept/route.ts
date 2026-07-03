@@ -45,9 +45,10 @@ export async function POST(
   }
 
   const body = await request.json();
-  const { signerName, clientIncluded } = body as {
+  const { signerName, clientIncluded, clientAbn } = body as {
     signerName:     string;
     clientIncluded: Record<string, boolean>;
+    clientAbn?:     string | null;
   };
 
   if (!signerName?.trim()) {
@@ -104,6 +105,8 @@ export async function POST(
       ...(contentUpdate    && { content:     contentUpdate as object }),
       ...(pricingDataUpdate && { pricingData: pricingDataUpdate }),
       ...(totalValueUpdate !== undefined && { totalValue: totalValueUpdate }),
+      // Client-supplied ABN for the invoice (optional; only overwrite if given)
+      ...(clientAbn && clientAbn.trim() ? { clientAbn: clientAbn.trim() } : {}),
     },
   });
 
@@ -116,6 +119,7 @@ export async function POST(
         signerName,
         acceptedAt:     acceptedAt.toISOString(),
         clientIncluded,
+        clientAbn:      clientAbn?.trim() || null,
       },
     },
   });

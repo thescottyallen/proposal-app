@@ -143,10 +143,11 @@ function SignatureSection({
   isAcceptable: boolean;
   isExpired: boolean;
   accepted: boolean;
-  onAccepted: (signerName: string, clientIncluded: Record<string, boolean>) => Promise<void>;
+  onAccepted: (signerName: string, clientAbn: string) => Promise<void>;
   message?: string;
 }) {
   const [signerName, setSignerName] = useState("");
+  const [abn, setAbn]               = useState("");
   const [accepting, setAccepting]   = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [localAccepted, setLocalAccepted] = useState(false);
@@ -161,7 +162,7 @@ function SignatureSection({
     setAccepting(true);
     setError(null);
     try {
-      await onAccepted(signerName.trim(), {});
+      await onAccepted(signerName.trim(), abn.trim());
       setLocalAccepted(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to accept. Please try again.");
@@ -206,6 +207,22 @@ function SignatureSection({
             className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             onKeyDown={(e) => e.key === "Enter" && handleAccept()}
           />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            ABN (optional)
+          </label>
+          <input
+            type="text"
+            value={abn}
+            onChange={(e) => setAbn(e.target.value)}
+            placeholder="e.g. 12 345 678 901"
+            className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onKeyDown={(e) => e.key === "Enter" && handleAccept()}
+          />
+          <p className="mt-1 text-xs text-gray-400">
+            Add your ABN if you&rsquo;d like it shown on your invoice.
+          </p>
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
         <button
@@ -374,7 +391,7 @@ export function PublicProposalView({ proposal, business }: Props) {
 
   const handleAccept = async (
     signerName: string,
-    _extraIncluded: Record<string, boolean>
+    clientAbn: string
   ) => {
     if (!allOptionGroupsResolved(doc)) {
       throw new Error("Please choose an option where a choice is offered before accepting.");
@@ -384,6 +401,7 @@ export function PublicProposalView({ proposal, business }: Props) {
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({
         signerName,
+        clientAbn: clientAbn || null,
         clientIncluded: buildClientIncluded(),
       }),
     });
