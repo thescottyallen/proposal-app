@@ -62,3 +62,15 @@ export function proposalAccessWhere(
 ): { createdBy?: string } {
   return canAccessAllProposals(role) ? {} : { createdBy: userId };
 }
+
+/**
+ * Generic owner/admin scope for shared records keyed by `createdBy`
+ * (templates, content-library blocks). Admins see and manage everything;
+ * everyone else is limited to items they created.
+ */
+export function ownerOrAdminWhere(
+  role: AppRole,
+  userId: string
+): { createdBy?: string } {
+  return role === "admin" ? {} : { createdBy: userId };
+}
