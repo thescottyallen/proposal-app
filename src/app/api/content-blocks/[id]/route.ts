@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthContext } from "@/lib/roles.server";
+import { ownerOrAdminWhere } from "@/lib/roles";
 import { prisma } from "@/lib/prisma";
 
 // GET /api/content-blocks/:id
@@ -8,13 +9,13 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) {
+  const ctx = await getAuthContext();
+  if (!ctx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const block = await prisma.contentBlock.findFirst({
-    where: { id, createdBy: userId },
+    where: { id, ...ownerOrAdminWhere(ctx.role, ctx.userId) },
   });
   if (!block) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -29,13 +30,13 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) {
+  const ctx = await getAuthContext();
+  if (!ctx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const existing = await prisma.contentBlock.findFirst({
-    where: { id, createdBy: userId },
+    where: { id, ...ownerOrAdminWhere(ctx.role, ctx.userId) },
   });
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -61,13 +62,13 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) {
+  const ctx = await getAuthContext();
+  if (!ctx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const existing = await prisma.contentBlock.findFirst({
-    where: { id, createdBy: userId },
+    where: { id, ...ownerOrAdminWhere(ctx.role, ctx.userId) },
   });
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

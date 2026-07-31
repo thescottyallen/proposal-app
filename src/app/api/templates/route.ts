@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthContext } from "@/lib/roles.server";
+import { ownerOrAdminWhere } from "@/lib/roles";
 import { prisma } from "@/lib/prisma";
 
 // GET /api/templates - list all templates
 export async function GET() {
-  const { userId } = await auth();
-  if (!userId) {
+  const ctx = await getAuthContext();
+  if (!ctx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const templates = await prisma.template.findMany({
-    where: { createdBy: userId },
+    // Admins see every template; everyone else only their own.
+    where: ownerOrAdminWhere(ctx.role, ctx.userId),
     orderBy: { createdAt: "desc" },
   });
 
@@ -20,8 +22,8 @@ export async function GET() {
 // POST /api/templates - create a new template
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth();
-    if (!userId) {
+    const ctx = await getAuthContext();
+    if (!ctx) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -39,7 +41,7 @@ export async function POST(request: NextRequest) {
       data: {
         name,
         content: content || {},
-        createdBy: userId,
+        createdBy: ctx.userId,
       },
     });
 

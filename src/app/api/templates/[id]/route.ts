@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { getAuthContext } from "@/lib/roles.server";
+import { ownerOrAdminWhere } from "@/lib/roles";
 import { prisma } from "@/lib/prisma";
 
 // GET /api/templates/:id
@@ -8,13 +9,13 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) {
+  const ctx = await getAuthContext();
+  if (!ctx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const template = await prisma.template.findFirst({
-    where: { id, createdBy: userId },
+    where: { id, ...ownerOrAdminWhere(ctx.role, ctx.userId) },
   });
 
   if (!template) {
@@ -30,13 +31,13 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) {
+  const ctx = await getAuthContext();
+  if (!ctx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const existing = await prisma.template.findFirst({
-    where: { id, createdBy: userId },
+    where: { id, ...ownerOrAdminWhere(ctx.role, ctx.userId) },
   });
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -62,13 +63,13 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) {
+  const ctx = await getAuthContext();
+  if (!ctx) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const existing = await prisma.template.findFirst({
-    where: { id, createdBy: userId },
+    where: { id, ...ownerOrAdminWhere(ctx.role, ctx.userId) },
   });
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
