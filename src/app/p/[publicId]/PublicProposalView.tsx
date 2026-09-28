@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { CheckCircle, XCircle } from "lucide-react";
+import { CheckCircle, Eye, XCircle } from "lucide-react";
 import { RichTextBlockReadOnly } from "@/components/editor/RichTextBlock";
 import { PricingBlockEditor } from "@/components/editor/PricingBlockEditor";
 import { ColumnBlockReadOnly } from "@/components/editor/ColumnBlockEditor";
@@ -135,6 +135,7 @@ function SignatureSection({
   isAcceptable,
   isExpired,
   accepted,
+  preview,
   onAccepted,
   message,
 }: {
@@ -143,6 +144,7 @@ function SignatureSection({
   isAcceptable: boolean;
   isExpired: boolean;
   accepted: boolean;
+  preview?: boolean;
   onAccepted: (signerName: string, clientAbn: string) => Promise<void>;
   message?: string;
 }) {
@@ -179,6 +181,55 @@ function SignatureSection({
         <p className="text-sm text-gray-500">
           Thank you, {signerName || ""}. Your acceptance has been recorded and a
           confirmation sent to {clientEmail}.
+        </p>
+      </div>
+    );
+  }
+
+  // Draft previews show the acceptance block so the page matches what the
+  // client will see, but the form stays disabled until the proposal is sent.
+  if (preview && !accepted) {
+    return (
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-6 py-6">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">
+          Accept this proposal
+        </h2>
+        <p className="text-sm text-gray-500 mb-5">
+          {message || DEFAULT_ACCEPTANCE_MESSAGE}
+        </p>
+        <div className="space-y-4 opacity-60">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Full name
+            </label>
+            <input
+              type="text"
+              disabled
+              placeholder="Type your full name"
+              className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg bg-gray-50"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              ABN (optional)
+            </label>
+            <input
+              type="text"
+              disabled
+              placeholder="e.g. 12 345 678 901"
+              className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg bg-gray-50"
+            />
+          </div>
+          <button
+            type="button"
+            disabled
+            className="w-full py-3 bg-blue-600 text-white text-sm font-semibold rounded-lg opacity-50 cursor-not-allowed"
+          >
+            Accept Proposal
+          </button>
+        </div>
+        <p className="mt-4 text-xs text-gray-500 text-center">
+          Acceptance is available once this proposal is sent.
         </p>
       </div>
     );
@@ -462,6 +513,7 @@ export function PublicProposalView({ proposal, business }: Props) {
           isAcceptable={isAcceptable}
           isExpired={isExpired}
           accepted={accepted}
+          preview={proposal.status === "DRAFT"}
           onAccepted={handleAccept}
           message={block.message}
         />
@@ -495,6 +547,14 @@ export function PublicProposalView({ proposal, business }: Props) {
 
   const statusBanners = (
     <>
+      {proposal.status === "DRAFT" && (
+        <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg">
+          <Eye size={18} className="text-amber-600 shrink-0" />
+          <p className="text-sm text-amber-800 font-medium">
+            This is a preview. The proposal has not been sent yet.
+          </p>
+        </div>
+      )}
       {accepted && (
         <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-lg">
           <CheckCircle size={18} className="text-green-600 shrink-0" />
