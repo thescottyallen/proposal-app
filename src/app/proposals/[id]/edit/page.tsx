@@ -6,7 +6,7 @@ import { useRouter, useParams } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import {
   ArrowLeft, Save, Send, Copy, Trash2,
-  BookmarkPlus, Check, Mail, X, Link2, Lock, History, XCircle, RotateCcw,
+  BookmarkPlus, Check, Mail, X, Link2, Lock, History, XCircle, RotateCcw, Eye,
 } from "lucide-react";
 import Link from "next/link";
 import { getStatusColor, formatDate } from "@/lib/utils";
@@ -60,7 +60,7 @@ interface ProposalEventMeta {
   eventType: string;
   createdAt: string;
   actorName: string | null;
-  metadata:  { editedBy?: string; changedFields?: string[] } | null;
+  metadata:  { editedBy?: string; changedFields?: string[]; to?: string } | null;
 }
 
 /** Human-readable description of a proposal activity event. */
@@ -71,6 +71,11 @@ function describeEvent(ev: ProposalEventMeta): string {
     return fields.length > 0
       ? `${who} edited ${fields.join(", ").toLowerCase()}`
       : `${who} made an edit`;
+  }
+  if (ev.eventType === "preview_sent") {
+    return ev.metadata?.to
+      ? `Preview emailed to ${ev.metadata.to}`
+      : "Preview link emailed";
   }
   const labels: Record<string, string> = {
     opened:         "Client opened the proposal",
@@ -138,6 +143,11 @@ export default function EditProposalPage() {
   const [followUpMessage, setFollowUpMessage]     = useState("");
   const [followUpSending, setFollowUpSending]     = useState(false);
   const [followUpError, setFollowUpError]         = useState("");
+  const [showPreviewModal, setShowPreviewModal]   = useState(false);
+  const [previewTo, setPreviewTo]                 = useState("");
+  const [previewMessage, setPreviewMessage]       = useState("");
+  const [previewSending, setPreviewSending]       = useState(false);
+  const [previewError, setPreviewError]           = useState("");
 
   const { clearChanges } = useUnsavedChanges(hasChanges);
 
@@ -326,7 +336,7 @@ export default function EditProposalPage() {
       window.document.execCommand("copy");
       window.document.body.removeChild(ta);
     }
-    showToast("Link copied");
+    showToast(proposal.status === "DRAFT" ? "Preview link copied" : "Link copied");
   };
 
   const handleSendEmail = async () => {
@@ -357,6 +367,35 @@ export default function EditProposalPage() {
       setSendError("Network error. Please try again.");
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleSendPreview = async () => {
+    const to = previewTo.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      setPreviewError("Please enter a valid email address.");
+      return;
+    }
+    setPreviewSending(true);
+    setPreviewError("");
+    await handleSave();
+    try {
+      const res = await fetch(`/api/proposals/${id}/preview`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ to, message: previewMessage }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setPreviewError(data.error || "Failed to send preview.");
+        return;
+      }
+      setShowPreviewModal(false);
+      showToast("Preview sent to " + to);
+    } catch {
+      setPreviewError("Network error. Please try again.");
+    } finally {
+      setPreviewSending(false);
     }
   };
 
@@ -500,6 +539,20 @@ export default function EditProposalPage() {
                 <Link2 size={12} />
                 Copy public link
               </button>
+              {isAuthor && (
+                <button
+                  onClick={() => {
+                    setPreviewTo(clientEmail || "");
+                    setPreviewMessage("");
+                    setPreviewError("");
+                    setShowPreviewModal(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50"
+                >
+                  <Eye size={12} />
+                  Send Preview
+                </button>
+              )}
               {isAuthor && ["SENT", "VIEWED"].includes(proposal.status) && (
                 <button
                   onClick={() => {
@@ -688,6 +741,65 @@ export default function EditProposalPage() {
               >
                 <Send size={14} />
                 {sending ? "Sending..." : "Send Email"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Preview email modal */}
+      {showPreviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/20" onClick={() => setShowPreviewModal(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <div className="flex items-center gap-2">
+                <Eye size={18} className="text-amber-600" />
+                <h2 className="text-sm font-semibold text-gray-900">Send Preview</h2>
+              </div>
+              <button onClick={() => setShowPreviewModal(false)} className="p-1 text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <p className="text-xs text-gray-500">
+                Email a preview link for &ldquo;{title}&rdquo;. The recipient can open it without signing in.
+                {proposal.status === "DRAFT"
+                  ? " The proposal stays a draft, and this visit is not recorded as a client view."
+                  : " This does not change the proposal status."}
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Send to</label>
+                <input
+                  type="email"
+                  value={previewTo}
+                  onChange={(e) => setPreviewTo(e.target.value)}
+                  placeholder="client@example.com"
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onKeyDown={(e) => e.key === "Enter" && handleSendPreview()}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Personal message (optional)</label>
+                <textarea
+                  value={previewMessage}
+                  onChange={(e) => setPreviewMessage(e.target.value)}
+                  placeholder="Add a note about this preview..."
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
+              {previewError && <p className="text-xs text-red-600">{previewError}</p>}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-gray-200">
+              <button onClick={() => setShowPreviewModal(false)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button
+                onClick={handleSendPreview}
+                disabled={previewSending}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Send size={14} />
+                {previewSending ? "Sending..." : "Send Preview"}
               </button>
             </div>
           </div>

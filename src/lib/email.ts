@@ -162,6 +162,45 @@ export async function sendAcceptanceNotificationToOwner({
   if (error) console.error("Failed to send owner acceptance notification:", error.message);
 }
 
+// ─── Preview email (does not mark the proposal as sent) ──────────────────────
+
+interface PreviewEmailParams {
+  to:            string;
+  clientName:    string;
+  proposalTitle: string;
+  publicUrl:     string;
+  senderName?:   string;
+  message?:      string;
+}
+
+export async function sendPreviewEmail({
+  to, clientName, proposalTitle, publicUrl, senderName, message,
+}: PreviewEmailParams) {
+  const greeting      = clientName ? `Hi ${clientName},` : "Hi,";
+  const customMessage = message
+    ? `<p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">${message.replace(/\n/g, "<br/>")}</p>`
+    : "";
+
+  const { error } = await resend.emails.send({
+    from:    FROM,
+    to:      [to],
+    subject: `Preview: ${proposalTitle}`,
+    html: emailWrapper(`Preview: ${proposalTitle}`, `
+      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">${greeting}</p>
+      ${customMessage}
+      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
+        ${senderName ? `${senderName} shared` : "Here is"} a preview of
+        <strong>${proposalTitle}</strong>. You can open it with the link below.
+        This preview does not need a login.
+      </p>
+      ${ctaButton(publicUrl, "View Preview")}
+      ${fallbackLink(publicUrl)}
+    `),
+  });
+
+  if (error) throw new Error(`Failed to send preview email: ${error.message}`);
+}
+
 // ─── Follow-up email to client ────────────────────────────────────────────────
 
 interface FollowUpEmailParams {

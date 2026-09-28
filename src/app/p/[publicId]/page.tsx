@@ -16,7 +16,10 @@ export default async function PublicProposalPage({ params }: Props) {
     where: { publicId },
   });
 
-  if (!proposal || proposal.status === "DRAFT") {
+  // Drafts stay on this same public URL so a copied preview link (and a
+  // preview email) opens the proposal without a staff login. Opens are only
+  // tracked, and acceptance only enabled, once the proposal is sent.
+  if (!proposal) {
     notFound();
   }
 
