@@ -7,7 +7,19 @@ const LOGO_URL = `${APP_URL}/logo.png`;
 
 // ─── Send proposal to client ──────────────────────────────────────────────────
 
-interface SendProposalEmailParams {
+interface EmailCopies {
+  cc?:  string[];
+  bcc?: string[];
+}
+
+function copyFields({ cc, bcc }: EmailCopies) {
+  return {
+    ...(cc && cc.length > 0 ? { cc } : {}),
+    ...(bcc && bcc.length > 0 ? { bcc } : {}),
+  };
+}
+
+interface SendProposalEmailParams extends EmailCopies {
   to:            string;
   clientName:    string;
   proposalTitle: string;
@@ -17,7 +29,7 @@ interface SendProposalEmailParams {
 }
 
 export async function sendProposalEmail({
-  to, clientName, proposalTitle, publicUrl, senderName, message,
+  to, cc, bcc, clientName, proposalTitle, publicUrl, senderName, message,
 }: SendProposalEmailParams) {
   const greeting      = clientName ? `Hi ${clientName},` : "Hi,";
   const customMessage = message
@@ -27,6 +39,7 @@ export async function sendProposalEmail({
   const { error } = await resend.emails.send({
     from:    FROM,
     to:      [to],
+    ...copyFields({ cc, bcc }),
     subject: `Proposal: ${proposalTitle}`,
     html: emailWrapper(proposalTitle, `
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">${greeting}</p>
@@ -164,7 +177,7 @@ export async function sendAcceptanceNotificationToOwner({
 
 // ─── Preview email (does not mark the proposal as sent) ──────────────────────
 
-interface PreviewEmailParams {
+interface PreviewEmailParams extends EmailCopies {
   to:            string;
   clientName:    string;
   proposalTitle: string;
@@ -174,7 +187,7 @@ interface PreviewEmailParams {
 }
 
 export async function sendPreviewEmail({
-  to, clientName, proposalTitle, publicUrl, senderName, message,
+  to, cc, bcc, clientName, proposalTitle, publicUrl, senderName, message,
 }: PreviewEmailParams) {
   const greeting      = clientName ? `Hi ${clientName},` : "Hi,";
   const customMessage = message
@@ -184,6 +197,7 @@ export async function sendPreviewEmail({
   const { error } = await resend.emails.send({
     from:    FROM,
     to:      [to],
+    ...copyFields({ cc, bcc }),
     subject: `Preview: ${proposalTitle}`,
     html: emailWrapper(`Preview: ${proposalTitle}`, `
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">${greeting}</p>
@@ -203,7 +217,7 @@ export async function sendPreviewEmail({
 
 // ─── Follow-up email to client ────────────────────────────────────────────────
 
-interface FollowUpEmailParams {
+interface FollowUpEmailParams extends EmailCopies {
   to:            string;
   clientName:    string;
   proposalTitle: string;
@@ -213,7 +227,7 @@ interface FollowUpEmailParams {
 }
 
 export async function sendFollowUpEmail({
-  to, clientName, proposalTitle, publicUrl, senderName, message,
+  to, cc, bcc, clientName, proposalTitle, publicUrl, senderName, message,
 }: FollowUpEmailParams) {
   const greeting      = clientName ? `Hi ${clientName},` : "Hi,";
   const customMessage = message
@@ -223,6 +237,7 @@ export async function sendFollowUpEmail({
   const { error } = await resend.emails.send({
     from:    FROM,
     to:      [to],
+    ...copyFields({ cc, bcc }),
     subject: `Following up: ${proposalTitle}`,
     html: emailWrapper("Following up on your proposal", `
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">${greeting}</p>

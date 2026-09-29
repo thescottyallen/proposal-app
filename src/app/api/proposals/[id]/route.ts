@@ -30,10 +30,15 @@ function firstPricingSettings(doc: ProposalDocument): ProposalPricingSettings | 
   return blocks.length > 0 ? blocks[0].pricingSettings : null;
 }
 
-/** Best-effort resolution of Clerk user IDs to display names. */
-async function resolveUserNames(
+interface ResolvedClerkUser {
+  name:  string;
+  email: string;
+}
+
+/** Best-effort resolution of Clerk user IDs to display names and primary emails. */
+async function resolveClerkUsers(
   ids: string[]
-): Promise<Record<string, string>> {
+): Promise<Record<string, ResolvedClerkUser>> {
   const unique = [...new Set(ids.filter(Boolean))];
   if (unique.length === 0) return {};
   const client = await clerkClient();
@@ -41,14 +46,16 @@ async function resolveUserNames(
     unique.map(async (uid) => {
       try {
         const u = await client.users.getUser(uid);
+        const email =
+          u.emailAddresses.find((e) => e.id === u.primaryEmailAddressId)
+            ?.emailAddress ?? "";
         const name =
           [u.firstName, u.lastName].filter(Boolean).join(" ").trim() ||
-          u.emailAddresses.find((e) => e.id === u.primaryEmailAddressId)
-            ?.emailAddress ||
+          email ||
           "Unknown user";
-        return [uid, name] as const;
+        return [uid, { name, email }] as const;
       } catch {
-        return [uid, "Unknown user"] as const;
+        return [uid, { name: "Unknown user", email: "" }] as const;
       }
     })
   );
@@ -83,20 +90,22 @@ export async function GET(
     .filter((e) => e.eventType === "edited")
     .map((e) => (e.metadata as { editedBy?: string } | null)?.editedBy)
     .filter((x): x is string => Boolean(x));
-  const names = await resolveUserNames([proposal.createdBy, ...editorIds]);
+  const users = await resolveClerkUsers([proposal.createdBy, ...editorIds]);
+  const author = users[proposal.createdBy];
 
   const events = (proposal.events as EventForLog[]).map((e) => {
     const editedBy = (e.metadata as { editedBy?: string } | null)?.editedBy;
     return {
       ...e,
-      actorName: editedBy ? (names[editedBy] ?? "Unknown user") : null,
+      actorName: editedBy ? (users[editedBy]?.name ?? "Unknown user") : null,
     };
   });
 
   return NextResponse.json({
     ...proposal,
     events,
-    authorName: names[proposal.createdBy] ?? "Unknown user",
+    authorName: author?.name ?? "Unknown user",
+    authorEmail: author?.email ?? "",
     viewerIsAuthor: proposal.createdBy === ctx.userId,
   });
 }

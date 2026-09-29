@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { sendFollowUpEmail } from "@/lib/email";
+import { parsedCopyLists, recipientMetadata } from "@/lib/email-recipients";
 
 // POST /api/proposals/:id/followup
 export async function POST(
@@ -16,10 +17,15 @@ export async function POST(
   if (!proposal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await request.json();
-  const { to, message } = body;
+  const { to, message, cc: ccInput, bcc: bccInput } = body;
 
   if (!to || typeof to !== "string" || !to.includes("@")) {
     return NextResponse.json({ error: "A valid email address is required" }, { status: 400 });
+  }
+
+  const copies = parsedCopyLists(ccInput, bccInput);
+  if (!copies.ok) {
+    return NextResponse.json({ error: copies.error }, { status: 400 });
   }
 
   const user       = await currentUser();
@@ -33,6 +39,8 @@ export async function POST(
   try {
     await sendFollowUpEmail({
       to,
+      cc:            copies.cc,
+      bcc:           copies.bcc,
       clientName:    proposal.clientName,
       proposalTitle: proposal.title,
       publicUrl,
@@ -41,7 +49,11 @@ export async function POST(
     });
 
     await prisma.proposalEvent.create({
-      data: { proposalId: id, eventType: "followup_sent" },
+      data: {
+        proposalId: id,
+        eventType:  "followup_sent",
+        metadata:   recipientMetadata(to, copies.cc, copies.bcc),
+      },
     });
 
     return NextResponse.json({ success: true });

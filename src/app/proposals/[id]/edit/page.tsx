@@ -4,6 +4,8 @@ import { Shell } from "@/components/ui/Shell";
 import { ProposalEditor } from "@/components/editor/ProposalEditor";
 import { useRouter, useParams } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
+import { useUser } from "@clerk/nextjs";
+import { isValidEmail, optionalCopyError, previewRecipientEmail } from "@/lib/email-recipients";
 import {
   ArrowLeft, Save, Send, Copy, Trash2,
   BookmarkPlus, Check, Mail, X, Link2, Lock, History, XCircle, RotateCcw, Eye,
@@ -51,6 +53,7 @@ interface ProposalMeta {
   pricingData:        Record<string, unknown> | null;
   // Access + activity (added by the detail API)
   authorName?:        string;
+  authorEmail?:       string;
   viewerIsAuthor?:    boolean;
   events?:            ProposalEventMeta[];
 }
@@ -60,7 +63,13 @@ interface ProposalEventMeta {
   eventType: string;
   createdAt: string;
   actorName: string | null;
-  metadata:  { editedBy?: string; changedFields?: string[]; to?: string } | null;
+  metadata:  {
+    editedBy?: string;
+    changedFields?: string[];
+    to?: string;
+    cc?: string[];
+    bcc?: string[];
+  } | null;
 }
 
 /** Human-readable description of a proposal activity event. */
@@ -73,9 +82,14 @@ function describeEvent(ev: ProposalEventMeta): string {
       : `${who} made an edit`;
   }
   if (ev.eventType === "preview_sent") {
-    return ev.metadata?.to
-      ? `Preview emailed to ${ev.metadata.to}`
-      : "Preview link emailed";
+    if (!ev.metadata?.to) return "Preview link emailed";
+    const copies = [
+      ...(ev.metadata.cc ?? []).map((email) => `CC ${email}`),
+      ...(ev.metadata.bcc ?? []).map((email) => `BCC ${email}`),
+    ];
+    return copies.length > 0
+      ? `Preview emailed to ${ev.metadata.to} (${copies.join(", ")})`
+      : `Preview emailed to ${ev.metadata.to}`;
   }
   const labels: Record<string, string> = {
     opened:         "Client opened the proposal",
@@ -108,10 +122,50 @@ function legacyPricingSettings(p: ProposalMeta) {
   };
 }
 
+function OptionalCopyFields({
+  cc,
+  bcc,
+  onCc,
+  onBcc,
+}: {
+  cc: string;
+  bcc: string;
+  onCc: (value: string) => void;
+  onBcc: (value: string) => void;
+}) {
+  const inputClass =
+    "w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500";
+  return (
+    <>
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1">CC (optional)</label>
+        <input
+          type="text"
+          value={cc}
+          onChange={(e) => onCc(e.target.value)}
+          placeholder="colleague@company.com, finance@company.com"
+          className={inputClass}
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1">BCC (optional)</label>
+        <input
+          type="text"
+          value={bcc}
+          onChange={(e) => onBcc(e.target.value)}
+          placeholder="another@company.com"
+          className={inputClass}
+        />
+      </div>
+    </>
+  );
+}
+
 export default function EditProposalPage() {
   const router = useRouter();
   const params = useParams();
   const id = params.id as string;
+  const { user } = useUser();
 
   const [proposal, setProposal]           = useState<ProposalMeta | null>(null);
   const [title, setTitle]                 = useState("");
@@ -135,16 +189,22 @@ export default function EditProposalPage() {
   const [templateName, setTemplateName]   = useState("");
   const [showSendModal, setShowSendModal] = useState(false);
   const [sendTo, setSendTo]               = useState("");
+  const [sendCc, setSendCc]               = useState("");
+  const [sendBcc, setSendBcc]             = useState("");
   const [sendMessage, setSendMessage]     = useState("");
   const [sending, setSending]             = useState(false);
   const [sendError, setSendError]         = useState("");
   const [showFollowUpModal, setShowFollowUpModal] = useState(false);
   const [followUpTo, setFollowUpTo]               = useState("");
+  const [followUpCc, setFollowUpCc]               = useState("");
+  const [followUpBcc, setFollowUpBcc]             = useState("");
   const [followUpMessage, setFollowUpMessage]     = useState("");
   const [followUpSending, setFollowUpSending]     = useState(false);
   const [followUpError, setFollowUpError]         = useState("");
   const [showPreviewModal, setShowPreviewModal]   = useState(false);
   const [previewTo, setPreviewTo]                 = useState("");
+  const [previewCc, setPreviewCc]                 = useState("");
+  const [previewBcc, setPreviewBcc]               = useState("");
   const [previewMessage, setPreviewMessage]       = useState("");
   const [previewSending, setPreviewSending]       = useState(false);
   const [previewError, setPreviewError]           = useState("");
@@ -243,6 +303,7 @@ export default function EditProposalPage() {
                 ...prev,
                 events:         data.events,
                 authorName:     data.authorName,
+                authorEmail:    data.authorEmail,
                 viewerIsAuthor: data.viewerIsAuthor,
               }
             : data
@@ -344,6 +405,11 @@ export default function EditProposalPage() {
       setSendError("Please enter a valid email address.");
       return;
     }
+    const copyError = optionalCopyError(sendCc, sendBcc);
+    if (copyError) {
+      setSendError(copyError);
+      return;
+    }
     setSending(true);
     setSendError("");
     await handleSave();
@@ -351,7 +417,7 @@ export default function EditProposalPage() {
       const res = await fetch(`/api/proposals/${id}/send`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ to: sendTo, message: sendMessage }),
+        body:    JSON.stringify({ to: sendTo, cc: sendCc, bcc: sendBcc, message: sendMessage }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -372,8 +438,13 @@ export default function EditProposalPage() {
 
   const handleSendPreview = async () => {
     const to = previewTo.trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    if (!isValidEmail(to)) {
       setPreviewError("Please enter a valid email address.");
+      return;
+    }
+    const copyError = optionalCopyError(previewCc, previewBcc);
+    if (copyError) {
+      setPreviewError(copyError);
       return;
     }
     setPreviewSending(true);
@@ -383,7 +454,7 @@ export default function EditProposalPage() {
       const res = await fetch(`/api/proposals/${id}/preview`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ to, message: previewMessage }),
+        body:    JSON.stringify({ to, cc: previewCc, bcc: previewBcc, message: previewMessage }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -404,13 +475,18 @@ export default function EditProposalPage() {
       setFollowUpError("Please enter a valid email address.");
       return;
     }
+    const copyError = optionalCopyError(followUpCc, followUpBcc);
+    if (copyError) {
+      setFollowUpError(copyError);
+      return;
+    }
     setFollowUpSending(true);
     setFollowUpError("");
     try {
       const res = await fetch(`/api/proposals/${id}/followup`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ to: followUpTo, message: followUpMessage }),
+        body:    JSON.stringify({ to: followUpTo, cc: followUpCc, bcc: followUpBcc, message: followUpMessage }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -450,6 +526,11 @@ export default function EditProposalPage() {
   // Admins can open & edit any proposal, but sending, follow-ups and deletion
   // stay with the author. (Older API responses omit the flag -> treat as author.)
   const isAuthor = proposal.viewerIsAuthor !== false;
+  const creatorEmail = previewRecipientEmail({
+    authorEmail: proposal.authorEmail,
+    viewerEmail: user?.primaryEmailAddress?.emailAddress,
+    isAuthor,
+  });
 
   return (
     <Shell>
@@ -520,6 +601,8 @@ export default function EditProposalPage() {
                   <button
                     onClick={() => {
                       setSendTo(clientEmail || "");
+                      setSendCc("");
+                      setSendBcc("");
                       setSendMessage("");
                       setSendError("");
                       setShowSendModal(true);
@@ -542,7 +625,9 @@ export default function EditProposalPage() {
               {isAuthor && (
                 <button
                   onClick={() => {
-                    setPreviewTo(clientEmail || "");
+                    setPreviewTo(creatorEmail);
+                    setPreviewCc("");
+                    setPreviewBcc("");
                     setPreviewMessage("");
                     setPreviewError("");
                     setShowPreviewModal(true);
@@ -557,6 +642,8 @@ export default function EditProposalPage() {
                 <button
                   onClick={() => {
                     setFollowUpTo(clientEmail || "");
+                    setFollowUpCc("");
+                    setFollowUpBcc("");
                     setFollowUpMessage("");
                     setFollowUpError("");
                     setShowFollowUpModal(true);
@@ -694,7 +781,7 @@ export default function EditProposalPage() {
       {showSendModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/20" onClick={() => setShowSendModal(false)} />
-          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
               <div className="flex items-center gap-2">
                 <Mail size={18} className="text-blue-600" />
@@ -720,6 +807,7 @@ export default function EditProposalPage() {
                   onKeyDown={(e) => e.key === "Enter" && handleSendEmail()}
                 />
               </div>
+              <OptionalCopyFields cc={sendCc} bcc={sendBcc} onCc={setSendCc} onBcc={setSendBcc} />
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Personal message (optional)</label>
                 <textarea
@@ -751,7 +839,7 @@ export default function EditProposalPage() {
       {showPreviewModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/20" onClick={() => setShowPreviewModal(false)} />
-          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
               <div className="flex items-center gap-2">
                 <Eye size={18} className="text-amber-600" />
@@ -763,7 +851,8 @@ export default function EditProposalPage() {
             </div>
             <div className="px-5 py-4 space-y-4">
               <p className="text-xs text-gray-500">
-                Email a preview link for &ldquo;{title}&rdquo;. The recipient can open it without signing in.
+                Email a preview link for &ldquo;{title}&rdquo; to yourself so you can check it before the client sees it.
+                The recipient can open it without signing in.
                 {proposal.status === "DRAFT"
                   ? " The proposal stays a draft, and this visit is not recorded as a client view."
                   : " This does not change the proposal status."}
@@ -774,11 +863,12 @@ export default function EditProposalPage() {
                   type="email"
                   value={previewTo}
                   onChange={(e) => setPreviewTo(e.target.value)}
-                  placeholder="client@example.com"
+                  placeholder="you@company.com"
                   className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   onKeyDown={(e) => e.key === "Enter" && handleSendPreview()}
                 />
               </div>
+              <OptionalCopyFields cc={previewCc} bcc={previewBcc} onCc={setPreviewCc} onBcc={setPreviewBcc} />
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Personal message (optional)</label>
                 <textarea
@@ -810,7 +900,7 @@ export default function EditProposalPage() {
       {showFollowUpModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/20" onClick={() => setShowFollowUpModal(false)} />
-          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
               <div className="flex items-center gap-2">
                 <Mail size={18} className="text-blue-600" />
@@ -835,6 +925,7 @@ export default function EditProposalPage() {
                   onKeyDown={(e) => e.key === "Enter" && handleSendFollowUp()}
                 />
               </div>
+              <OptionalCopyFields cc={followUpCc} bcc={followUpBcc} onCc={setFollowUpCc} onBcc={setFollowUpBcc} />
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Message (optional)</label>
                 <textarea
