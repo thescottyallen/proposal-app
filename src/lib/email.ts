@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { buildOutreachIntroHtml } from "@/lib/email-greeting";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM   = "The Product Bus <hello@theproductbus.com>";
@@ -20,21 +21,19 @@ function copyFields({ cc, bcc }: EmailCopies) {
 }
 
 interface SendProposalEmailParams extends EmailCopies {
-  to:            string;
-  clientName:    string;
-  proposalTitle: string;
-  publicUrl:     string;
-  senderName?:   string;
-  message?:      string;
+  to:             string;
+  /** Contact / To person. Company name must not be passed here. */
+  recipientName?: string | null;
+  proposalTitle:  string;
+  publicUrl:      string;
+  senderName?:    string;
+  message?:       string;
 }
 
 export async function sendProposalEmail({
-  to, cc, bcc, clientName, proposalTitle, publicUrl, senderName, message,
+  to, cc, bcc, recipientName, proposalTitle, publicUrl, senderName, message,
 }: SendProposalEmailParams) {
-  const greeting      = clientName ? `Hi ${clientName},` : "Hi,";
-  const customMessage = message
-    ? `<p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">${message.replace(/\n/g, "<br/>")}</p>`
-    : "";
+  const intro = buildOutreachIntroHtml({ recipientName, message });
 
   const { error } = await resend.emails.send({
     from:    FROM,
@@ -42,8 +41,7 @@ export async function sendProposalEmail({
     ...copyFields({ cc, bcc }),
     subject: `Proposal: ${proposalTitle}`,
     html: emailWrapper(proposalTitle, `
-      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">${greeting}</p>
-      ${customMessage}
+      ${intro}
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
         ${senderName ? `${senderName} has` : "A proposal has been"} prepared for you. Click below to view it.
       </p>
@@ -178,21 +176,19 @@ export async function sendAcceptanceNotificationToOwner({
 // ─── Preview email (does not mark the proposal as sent) ──────────────────────
 
 interface PreviewEmailParams extends EmailCopies {
-  to:            string;
-  clientName:    string;
-  proposalTitle: string;
-  publicUrl:     string;
-  senderName?:   string;
-  message?:      string;
+  to:             string;
+  /** Contact / To person. Company name must not be passed here. */
+  recipientName?: string | null;
+  proposalTitle:  string;
+  publicUrl:      string;
+  senderName?:    string;
+  message?:       string;
 }
 
 export async function sendPreviewEmail({
-  to, cc, bcc, clientName, proposalTitle, publicUrl, senderName, message,
+  to, cc, bcc, recipientName, proposalTitle, publicUrl, senderName, message,
 }: PreviewEmailParams) {
-  const greeting      = clientName ? `Hi ${clientName},` : "Hi,";
-  const customMessage = message
-    ? `<p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">${message.replace(/\n/g, "<br/>")}</p>`
-    : "";
+  const intro = buildOutreachIntroHtml({ recipientName, message });
 
   const { error } = await resend.emails.send({
     from:    FROM,
@@ -200,8 +196,7 @@ export async function sendPreviewEmail({
     ...copyFields({ cc, bcc }),
     subject: `Preview: ${proposalTitle}`,
     html: emailWrapper(`Preview: ${proposalTitle}`, `
-      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">${greeting}</p>
-      ${customMessage}
+      ${intro}
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
         ${senderName ? `${senderName} shared` : "Here is"} a preview of
         <strong>${proposalTitle}</strong>. You can open it with the link below.
@@ -218,21 +213,19 @@ export async function sendPreviewEmail({
 // ─── Follow-up email to client ────────────────────────────────────────────────
 
 interface FollowUpEmailParams extends EmailCopies {
-  to:            string;
-  clientName:    string;
-  proposalTitle: string;
-  publicUrl:     string;
-  senderName?:   string;
-  message?:      string;
+  to:             string;
+  /** Contact / To person. Company name must not be passed here. */
+  recipientName?: string | null;
+  proposalTitle:  string;
+  publicUrl:      string;
+  senderName?:    string;
+  message?:       string;
 }
 
 export async function sendFollowUpEmail({
-  to, cc, bcc, clientName, proposalTitle, publicUrl, senderName, message,
+  to, cc, bcc, recipientName, proposalTitle, publicUrl, senderName, message,
 }: FollowUpEmailParams) {
-  const greeting      = clientName ? `Hi ${clientName},` : "Hi,";
-  const customMessage = message
-    ? `<p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">${message.replace(/\n/g, "<br/>")}</p>`
-    : "";
+  const intro = buildOutreachIntroHtml({ recipientName, message });
 
   const { error } = await resend.emails.send({
     from:    FROM,
@@ -240,8 +233,7 @@ export async function sendFollowUpEmail({
     ...copyFields({ cc, bcc }),
     subject: `Following up: ${proposalTitle}`,
     html: emailWrapper("Following up on your proposal", `
-      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">${greeting}</p>
-      ${customMessage}
+      ${intro}
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
         ${senderName ? `${senderName} wanted to follow up` : "Just following up"} on the proposal
         <strong>${proposalTitle}</strong>. You can view it using the link below.

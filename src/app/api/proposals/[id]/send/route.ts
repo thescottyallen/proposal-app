@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { sendProposalEmail } from "@/lib/email";
+import { recipientNameFromProposal } from "@/lib/email-greeting";
 import { parsedCopyLists, recipientMetadata } from "@/lib/email-recipients";
 
 // POST /api/proposals/:id/send
@@ -13,7 +14,13 @@ export async function POST(
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const proposal = await prisma.proposal.findFirst({ where: { id, createdBy: userId } });
+  const proposal = await prisma.proposal.findFirst({
+    where: { id, createdBy: userId },
+    include: {
+      contact: { select: { name: true, email: true } },
+      client:  { select: { contacts: { select: { name: true, email: true } } } },
+    },
+  });
   if (!proposal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await request.json();
@@ -41,7 +48,7 @@ export async function POST(
       to,
       cc:            copies.cc,
       bcc:           copies.bcc,
-      clientName:    proposal.clientName,
+      recipientName: recipientNameFromProposal(to, proposal),
       proposalTitle: proposal.title,
       publicUrl,
       senderName,
