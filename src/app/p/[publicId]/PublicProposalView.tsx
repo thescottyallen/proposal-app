@@ -596,7 +596,7 @@ export function PublicProposalView({ proposal, business }: Props) {
 
         {/* Main content */}
         <div className="flex-1 overflow-y-auto">
-          <div className="max-w-2xl mx-auto px-8 py-10">
+          <div className="max-w-5xl mx-auto px-8 py-10">
             {/* Proposal header */}
             <div className="mb-8">
               {business.businessName && (
@@ -653,7 +653,7 @@ export function PublicProposalView({ proposal, business }: Props) {
   // Centred layout (single page, no sidebar customisation)
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-3xl mx-auto px-6 py-12">
+      <div className="max-w-5xl mx-auto px-6 py-12">
         {/* Proposal header */}
         <div className="mb-8">
           {business.businessName && (
