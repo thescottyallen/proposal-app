@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { sendPreviewEmail } from "@/lib/email";
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { isValidEmail, parsedCopyLists, recipientMetadata } from "@/lib/email-recipients";
 
 // POST /api/proposals/:id/preview
 // Emails a working preview link. Does not change proposal status.
@@ -22,7 +21,7 @@ export async function POST(
     return NextResponse.json({ error: "This proposal has no preview link" }, { status: 400 });
   }
 
-  let body: { to?: unknown; message?: unknown };
+  let body: { to?: unknown; message?: unknown; cc?: unknown; bcc?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -30,8 +29,13 @@ export async function POST(
   }
 
   const to = typeof body.to === "string" ? body.to.trim() : "";
-  if (!EMAIL_PATTERN.test(to)) {
+  if (!isValidEmail(to)) {
     return NextResponse.json({ error: "A valid email address is required" }, { status: 400 });
+  }
+
+  const copies = parsedCopyLists(body.cc, body.bcc);
+  if (!copies.ok) {
+    return NextResponse.json({ error: copies.error }, { status: 400 });
   }
 
   const message = typeof body.message === "string" ? body.message : undefined;
@@ -47,6 +51,8 @@ export async function POST(
   try {
     await sendPreviewEmail({
       to,
+      cc:            copies.cc,
+      bcc:           copies.bcc,
       clientName:    proposal.clientName,
       proposalTitle: proposal.title,
       publicUrl,
@@ -58,7 +64,7 @@ export async function POST(
       data: {
         proposalId: id,
         eventType:  "preview_sent",
-        metadata:   { to },
+        metadata:   recipientMetadata(to, copies.cc, copies.bcc),
       },
     });
 
