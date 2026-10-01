@@ -39,16 +39,21 @@ export function ContentBlockPicker({
   const [filterCategory, setFilterCategory] = useState("ALL");
 
   useEffect(() => {
-    if (isOpen) {
-      setLoading(true);
-      fetch("/api/content-blocks")
-        .then((res) => res.json())
-        .then((data) => {
-          setBlocks(data);
-          setLoading(false);
-        })
-        .catch(() => setLoading(false));
-    }
+    if (!isOpen) return;
+    let cancelled = false;
+    fetch("/api/content-blocks")
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        setBlocks(data);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;

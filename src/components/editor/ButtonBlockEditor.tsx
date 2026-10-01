@@ -1,14 +1,24 @@
 "use client";
 
-import { MousePointerClick } from "lucide-react";
-import type { ButtonBlock } from "@/lib/proposal-document";
-import type { ProposalPage } from "@/lib/proposal-document";
+import { useState } from "react";
+import { ChevronDown, MousePointerClick, TriangleAlert } from "lucide-react";
+import { AnchoredPanel } from "./AnchoredPanel";
+import {
+  buttonLinkType,
+  buttonWebAddress,
+  resolveButtonLink,
+  type ButtonBlock,
+  type ProposalPage,
+} from "@/lib/proposal-document";
 
 interface ButtonBlockEditorProps {
   block: ButtonBlock;
   pages: ProposalPage[];
   onChange: (updated: ButtonBlock) => void;
   readOnly?: boolean;
+  /** Drop the outer card when the button sits inside a column cell. */
+  embedded?: boolean;
+  onNavigatePage?: (pageId: string) => void;
 }
 
 const STYLE_CLASSES: Record<string, string> = {
@@ -23,56 +33,88 @@ const ALIGN_CLASSES: Record<string, string> = {
   right:  "justify-end",
 };
 
-export function ButtonBlockEditor({ block, pages, onChange, readOnly }: ButtonBlockEditorProps) {
+function openWebAddress(href: string) {
+  const url = /^[a-z][a-z0-9+.-]*:/i.test(href) ? href : `https://${href}`;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+export function ButtonBlockEditor({
+  block,
+  pages,
+  onChange,
+  readOnly,
+  embedded = false,
+  onNavigatePage,
+}: ButtonBlockEditorProps) {
   const style     = block.style     ?? "primary";
   const alignment = block.alignment ?? "center";
   const label     = block.label     || "Click here";
+  const linkType  = buttonLinkType(block);
+  const resolved  = resolveButtonLink(block, pages);
+  const missing   = resolved.kind === "missing-page";
+  const [pageMenuAnchor, setPageMenuAnchor] = useState<HTMLElement | null>(null);
+
+  const selectedPageName =
+    resolved.kind === "page" ? resolved.pageName : missing ? "Deleted page" : "";
+
+  const setWebAddress = (href: string) => {
+    onChange({ ...block, linkType: "url", href, targetPageId: href });
+  };
+
+  const setPageTarget = (pageId: string) => {
+    onChange({ ...block, linkType: "page", targetPageId: pageId });
+    setPageMenuAnchor(null);
+  };
 
   if (readOnly) {
-    // In editor readOnly mode, still show a non-functional preview
+    if (missing) {
+      return (
+        <DeletedPageWarning label={label} style={style} alignment={alignment} backgroundColor={block.backgroundColor} />
+      );
+    }
     return (
-      <div
-        className="rounded-lg border border-gray-200 shadow-sm px-8 py-6"
-        style={{ backgroundColor: block.backgroundColor || "#ffffff" }}
-      >
-        <div className={`flex ${ALIGN_CLASSES[alignment]}`}>
-          <span
-            className={`inline-flex items-center px-6 py-3 rounded-lg text-sm font-semibold cursor-default ${STYLE_CLASSES[style]}`}
-          >
-            {label}
-          </span>
-        </div>
-      </div>
+      <ButtonBlockView
+        block={block}
+        pages={pages}
+        onNavigatePage={onNavigatePage}
+        bare={embedded}
+      />
     );
   }
 
-  const isExternal = block.targetPageId?.startsWith("http");
+  const shell = embedded
+    ? "space-y-4"
+    : "rounded-lg border border-gray-200 shadow-sm";
 
   return (
-    <div
-      className="rounded-lg border border-gray-200 shadow-sm"
-      style={{ backgroundColor: block.backgroundColor || "#ffffff" }}
-    >
-      {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 bg-gray-50 rounded-t-lg">
-        <MousePointerClick size={14} className="text-indigo-500" />
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Button</span>
-      </div>
+    <div className={shell} style={embedded ? undefined : { backgroundColor: block.backgroundColor || "#ffffff" }}>
+      {!embedded && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 bg-gray-50 rounded-t-lg">
+          <MousePointerClick size={14} className="text-indigo-500" />
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Button</span>
+        </div>
+      )}
 
-      <div className="px-6 py-5 space-y-4">
-        {/* Preview */}
+      <div className={embedded ? "space-y-4" : "px-6 py-5 space-y-4"}>
+        {missing && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+            <p>
+              This page was deleted. Choose another page. Clients will not see this button until it points at a page.
+            </p>
+          </div>
+        )}
+
         <div className={`flex ${ALIGN_CLASSES[alignment]}`}>
           <span
-            className={`inline-flex items-center px-6 py-3 rounded-lg text-sm font-semibold cursor-default transition-colors ${STYLE_CLASSES[style]}`}
+            className={`inline-flex items-center px-6 py-3 rounded-lg text-sm font-semibold cursor-default transition-colors ${STYLE_CLASSES[style]} ${missing ? "opacity-50" : ""}`}
           >
             {label || "Button label…"}
           </span>
         </div>
 
-        {/* Settings row */}
-        <div className="grid grid-cols-2 gap-3">
-          {/* Label */}
-          <div className="col-span-2">
+        <div className={`grid gap-3 ${embedded ? "grid-cols-1" : "grid-cols-2"}`}>
+          <div className={embedded ? "" : "col-span-2"}>
             <label className="block text-xs text-gray-500 mb-1">Button label</label>
             <input
               type="text"
@@ -83,41 +125,103 @@ export function ButtonBlockEditor({ block, pages, onChange, readOnly }: ButtonBl
             />
           </div>
 
-          {/* Target */}
-          <div className="col-span-2">
-            <label className="block text-xs text-gray-500 mb-1">Navigate to</label>
-            <select
-              value={isExternal ? "__external__" : (block.targetPageId || "")}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val === "__external__") {
-                  onChange({ ...block, targetPageId: "https://" });
-                } else {
-                  onChange({ ...block, targetPageId: val });
-                }
-              }}
-              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Select a page…</option>
-              {pages.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-              <option value="__external__">External URL…</option>
-            </select>
-            {isExternal && (
+          <div className={embedded ? "" : "col-span-2"}>
+            <label className="block text-xs text-gray-500 mb-1">Link</label>
+            <div className="grid grid-cols-2 gap-1 p-1 bg-gray-100 rounded-lg">
+              <button
+                type="button"
+                onClick={() => {
+                  const href = buttonWebAddress(block) || block.href || "https://";
+                  setWebAddress(href);
+                }}
+                className={`px-2 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  linkType === "url" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                Web address
+              </button>
+              <button
+                type="button"
+                data-testid="button-link-type-page"
+                onClick={() => {
+                  const current = pages.some((page) => page.id === block.targetPageId)
+                    ? block.targetPageId
+                    : "";
+                  onChange({ ...block, linkType: "page", targetPageId: current });
+                }}
+                className={`px-2 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  linkType === "page" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                Page in this proposal
+              </button>
+            </div>
+
+            {linkType === "url" ? (
               <input
                 type="url"
-                value={block.targetPageId}
-                onChange={(e) => onChange({ ...block, targetPageId: e.target.value })}
+                value={buttonWebAddress(block)}
+                onChange={(e) => setWebAddress(e.target.value)}
                 placeholder="https://example.com"
                 className="mt-2 w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            ) : (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  data-testid="button-page-select"
+                  aria-haspopup="listbox"
+                  aria-expanded={pageMenuAnchor !== null}
+                  onClick={(event) => {
+                    setPageMenuAnchor((current) =>
+                      current ? null : event.currentTarget
+                    );
+                  }}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm border rounded-lg bg-white text-left focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    missing ? "border-amber-300 text-amber-800" : "border-gray-200 text-gray-900"
+                  }`}
+                >
+                  <span className={selectedPageName ? "" : "text-gray-400"}>
+                    {selectedPageName || "Select a page…"}
+                  </span>
+                  <ChevronDown size={14} className="text-gray-400 shrink-0" />
+                </button>
+                {pageMenuAnchor && (
+                  <AnchoredPanel
+                    anchor={pageMenuAnchor}
+                    onClose={() => setPageMenuAnchor(null)}
+                    matchAnchorWidth
+                  >
+                    <ul
+                      role="listbox"
+                      data-testid="button-page-menu"
+                      className="bg-white rounded-lg shadow-lg border border-gray-200 py-1"
+                    >
+                      {pages.length === 0 && (
+                        <li className="px-3 py-2 text-sm text-gray-400">No pages yet</li>
+                      )}
+                      {pages.map((page) => (
+                        <li key={page.id}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={page.id === block.targetPageId}
+                            onClick={() => setPageTarget(page.id)}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
+                              page.id === block.targetPageId ? "bg-blue-50 text-blue-700 font-medium" : "text-gray-800"
+                            }`}
+                          >
+                            {page.name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </AnchoredPanel>
+                )}
+              </div>
             )}
           </div>
 
-          {/* Style */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Style</label>
             <select
@@ -131,7 +235,6 @@ export function ButtonBlockEditor({ block, pages, onChange, readOnly }: ButtonBl
             </select>
           </div>
 
-          {/* Alignment */}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Alignment</label>
             <select
@@ -150,40 +253,83 @@ export function ButtonBlockEditor({ block, pages, onChange, readOnly }: ButtonBl
   );
 }
 
-/** Read-only render used in the public proposal view */
+function DeletedPageWarning({
+  label,
+  style,
+  alignment,
+  backgroundColor,
+}: {
+  label: string;
+  style: string;
+  alignment: string;
+  backgroundColor?: string;
+}) {
+  return (
+    <div
+      className="rounded-lg border border-amber-200 shadow-sm px-8 py-6"
+      style={{ backgroundColor: backgroundColor || "#fffbeb" }}
+    >
+      <div className="flex items-start gap-2 mb-3 text-xs text-amber-800">
+        <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+        <p>This page was deleted. Clients will not see this button.</p>
+      </div>
+      <div className={`flex ${ALIGN_CLASSES[alignment]}`}>
+        <span className={`inline-flex items-center px-6 py-3 rounded-lg text-sm font-semibold opacity-50 ${STYLE_CLASSES[style]}`}>
+          {label}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Read-only render used on the public proposal and in the editor preview. */
 export function ButtonBlockView({
   block,
+  pages,
   onNavigatePage,
+  bare = false,
 }: {
   block: ButtonBlock;
+  pages: { id: string; name: string }[];
   onNavigatePage?: (pageId: string) => void;
+  bare?: boolean;
 }) {
   const style     = block.style     ?? "primary";
   const alignment = block.alignment ?? "center";
   const label     = block.label     || "Click here";
-  const isExternal = block.targetPageId?.startsWith("http");
+  const resolved  = resolveButtonLink(block, pages);
+
+  // A button whose page was deleted is left out of the public page.
+  if (resolved.kind === "missing-page" || resolved.kind === "unset") return null;
 
   const handleClick = () => {
-    if (isExternal) {
-      window.open(block.targetPageId, "_blank", "noopener,noreferrer");
-    } else if (block.targetPageId && onNavigatePage) {
-      onNavigatePage(block.targetPageId);
+    if (resolved.kind === "url") {
+      openWebAddress(resolved.href);
+      return;
     }
+    onNavigatePage?.(resolved.pageId);
   };
+
+  const control = (
+    <div className={`flex ${ALIGN_CLASSES[alignment]}`}>
+      <button
+        type="button"
+        onClick={handleClick}
+        className={`inline-flex items-center px-6 py-3 rounded-lg text-sm font-semibold transition-colors ${STYLE_CLASSES[style]}`}
+      >
+        {label}
+      </button>
+    </div>
+  );
+
+  if (bare) return control;
 
   return (
     <div
       className="rounded-lg border border-gray-200 shadow-sm px-8 py-6"
       style={{ backgroundColor: block.backgroundColor || "#ffffff" }}
     >
-      <div className={`flex ${ALIGN_CLASSES[alignment]}`}>
-        <button
-          onClick={handleClick}
-          className={`inline-flex items-center px-6 py-3 rounded-lg text-sm font-semibold transition-colors ${STYLE_CLASSES[style]}`}
-        >
-          {label}
-        </button>
-      </div>
+      {control}
     </div>
   );
 }

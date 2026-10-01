@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { CheckCircle, Eye, XCircle } from "lucide-react";
 import { RichTextBlockReadOnly } from "@/components/editor/RichTextBlock";
 import { PricingBlockEditor } from "@/components/editor/PricingBlockEditor";
 import { ColumnBlockReadOnly } from "@/components/editor/ColumnBlockEditor";
 import { ButtonBlockView } from "@/components/editor/ButtonBlockEditor";
+import { PageNavRow } from "@/components/editor/PageNav";
 import {
   ProposalDocument,
   ProposalPage,
@@ -19,6 +20,9 @@ import {
   clearOptionSelections,
   selectOption,
   allOptionGroupsResolved,
+  pageHash,
+  pageIdFromHash,
+  showPageNavigation,
 } from "@/lib/proposal-document";
 import type { ProposalPricingSettings } from "@/lib/pricing-types";
 import { formatDate } from "@/lib/utils";
@@ -318,7 +322,7 @@ function ProposalSidebar({
 
   return (
     <aside
-      className="sticky top-0 h-screen w-56 shrink-0 flex flex-col overflow-y-auto"
+      className="sticky top-0 h-screen w-56 shrink-0 hidden md:flex flex-col overflow-y-auto"
       style={{ backgroundColor: bgColour }}
     >
       {/* Logo */}
@@ -371,6 +375,64 @@ function ProposalSidebar({
   );
 }
 
+/** Sidebar collapsed to a horizontal strip on small screens. */
+function MobilePageBar({
+  doc,
+  activePageId,
+  onSelectPage,
+}: {
+  doc: ProposalDocument;
+  activePageId: string;
+  onSelectPage: (id: string) => void;
+}) {
+  const showPages = doc.pages.length > 1;
+  if (!doc.sidebar?.logoUrl && !showPages) return null;
+
+  const bgColour = doc.sidebar?.backgroundColor || "#ffffff";
+  const dark = isDarkColour(bgColour);
+  const activeClass = dark
+    ? "bg-white/15 text-white font-medium"
+    : "bg-gray-100 text-gray-900 font-medium";
+  const idleClass = dark ? "text-white/70" : "text-gray-500";
+
+  return (
+    <div
+      className="md:hidden sticky top-0 z-30 border-b"
+      style={{
+        backgroundColor: bgColour,
+        borderColor: dark ? "rgba(255,255,255,0.12)" : "#e5e7eb",
+      }}
+    >
+      {doc.sidebar?.logoUrl && (
+        <div className="px-4 pt-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={doc.sidebar.logoUrl}
+            alt="Logo"
+            className="max-h-8 max-w-[140px] object-contain"
+          />
+        </div>
+      )}
+      {showPages && (
+        <div className="flex gap-1 overflow-x-auto px-3 py-2">
+          {doc.pages.map((page) => (
+            <button
+              key={page.id}
+              type="button"
+              onClick={() => onSelectPage(page.id)}
+              className={`shrink-0 whitespace-nowrap px-3 py-1.5 rounded-md text-sm transition-colors ${
+                page.id === activePageId ? activeClass : idleClass
+              }`}
+            >
+              {page.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function PublicProposalView({ proposal, business }: Props) {
@@ -393,7 +455,12 @@ export function PublicProposalView({ proposal, business }: Props) {
   const [activePageId, setActivePageId] = useState<string>(
     initialDoc.pages[0]?.id ?? ""
   );
+  const [hashReady, setHashReady] = useState(false);
   const [accepted, setAccepted] = useState(proposal.status === "ACCEPTED");
+  const pagesRef = useRef(initialDoc.pages);
+  useEffect(() => {
+    pagesRef.current = doc.pages;
+  }, [doc.pages]);
 
   const isAcceptable = ["SENT", "VIEWED"].includes(proposal.status) && !accepted;
   const isExpired    = proposal.status === "EXPIRED";
@@ -439,6 +506,59 @@ export function PublicProposalView({ proposal, business }: Props) {
     }
     return map;
   };
+
+  const scrollToTop = () => {
+    requestAnimationFrame(() => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    });
+  };
+
+  // Sidebar, page buttons, and Back / Next all go through this so the page,
+  // the URL hash, and the scroll position stay in step.
+  const selectPage = useCallback((pageId: string) => {
+    if (!pagesRef.current.some((page) => page.id === pageId)) return;
+    setActivePageId(pageId);
+    const nextHash = `#${pageHash(pageId)}`;
+    if (window.location.hash !== nextHash) {
+      window.history.pushState(null, "", nextHash);
+    }
+    scrollToTop();
+  }, []);
+
+  useEffect(() => {
+    const syncFromUrl = () => {
+      const pages = pagesRef.current;
+      const id = pageIdFromHash(window.location.hash, pages) ?? pages[0]?.id ?? "";
+      if (id) setActivePageId(id);
+      scrollToTop();
+    };
+    const initial = pageIdFromHash(window.location.hash, pagesRef.current);
+    if (initial) setActivePageId(initial);
+    setHashReady(true);
+    window.addEventListener("hashchange", syncFromUrl);
+    window.addEventListener("popstate", syncFromUrl);
+    return () => {
+      window.removeEventListener("hashchange", syncFromUrl);
+      window.removeEventListener("popstate", syncFromUrl);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hashReady || !activePageId) return;
+    const body = JSON.stringify({
+      proposalId: proposal.id,
+      eventType: "viewed_section",
+      sectionId: activePageId,
+    });
+    fetch("/api/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+    }).catch(() => {});
+  }, [hashReady, activePageId, proposal.id]);
 
   const handleAccept = async (
     signerName: string,
@@ -526,6 +646,8 @@ export function PublicProposalView({ proposal, business }: Props) {
           key={block.id}
           block={block as ColumnBlock}
           backgroundColor={block.backgroundColor}
+          pages={doc.pages}
+          onNavigatePage={selectPage}
         />
       );
     }
@@ -535,7 +657,8 @@ export function PublicProposalView({ proposal, business }: Props) {
         <ButtonBlockView
           key={block.id}
           block={block as ButtonBlock}
-          onNavigatePage={setActivePageId}
+          pages={doc.pages}
+          onNavigatePage={selectPage}
         />
       );
     }
@@ -583,20 +706,34 @@ export function PublicProposalView({ proposal, business }: Props) {
     </>
   );
 
+  const pageNav = showPageNavigation(doc) ? (
+    <PageNavRow
+      pages={doc.pages}
+      activePageId={activePage.id}
+      sidebar={doc.sidebar}
+      onSelectPage={selectPage}
+    />
+  ) : null;
+
   // ─── Render: sidebar layout vs centred layout ─────────────────────────────
 
   if (showSidebar) {
     return (
-      <div className="flex min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 md:flex">
         <ProposalSidebar
           doc={doc}
           activePageId={activePageId}
-          onSelectPage={setActivePageId}
+          onSelectPage={selectPage}
         />
 
         {/* Main content */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-5xl mx-auto px-8 py-10">
+        <div className="flex-1 min-w-0">
+          <MobilePageBar
+            doc={doc}
+            activePageId={activePageId}
+            onSelectPage={selectPage}
+          />
+          <div className="max-w-5xl mx-auto px-4 py-6 sm:px-8 sm:py-10">
             {/* Proposal header */}
             <div className="mb-8">
               {business.businessName && (
@@ -638,6 +775,8 @@ export function PublicProposalView({ proposal, business }: Props) {
             <div className="space-y-4">
               {activePage.blocks.map(renderBlock)}
             </div>
+
+            {pageNav}
 
             {/* Footer */}
             <div className="flex items-center justify-between text-xs text-gray-400 pt-6 mt-8 border-t border-gray-200">
@@ -695,6 +834,8 @@ export function PublicProposalView({ proposal, business }: Props) {
         <div className="space-y-4">
           {activePage.blocks.map(renderBlock)}
         </div>
+
+        {pageNav}
 
         {/* Footer */}
         <div className="flex items-center justify-between text-xs text-gray-400 pt-6 mt-8 border-t border-gray-200">

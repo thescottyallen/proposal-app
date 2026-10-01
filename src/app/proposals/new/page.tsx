@@ -13,6 +13,7 @@ import {
   defaultDocument,
   migrateToDocument,
   isProposalDocument,
+  withDefaultPageNav,
   ProposalDocument,
 } from "@/lib/proposal-document";
 import { defaultPricingSettings } from "@/lib/pricing-types";
@@ -132,9 +133,10 @@ function NewProposalForm() {
       .then((template) => {
         if (template.content) {
           const content = template.content as Record<string, unknown>;
-          setDocument(
-            isProposalDocument(content) ? content : migrateToDocument(content, null, defaultPricingSettings())
-          );
+          const doc = isProposalDocument(content)
+            ? content
+            : migrateToDocument(content, null, defaultPricingSettings());
+          setDocument(withDefaultPageNav(doc));
         }
         setTitle((prev) => prev === "Untitled Proposal" ? `New Proposal from ${template.name}` : prev);
       })

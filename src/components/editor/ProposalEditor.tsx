@@ -9,6 +9,7 @@ import { SignatureBlockEditor, DEFAULT_ACCEPTANCE_MESSAGE } from "./SignatureBlo
 import { ColumnBlockEditor } from "./ColumnBlockEditor";
 import { ButtonBlockEditor } from "./ButtonBlockEditor";
 import { AddBlockMenu } from "./AddBlockMenu";
+import { PageNavRow } from "./PageNav";
 import { ContentBlockPicker } from "./ContentBlockPicker";
 import {
   ProposalDocument,
@@ -45,7 +46,8 @@ export function ProposalEditor({
   const [activePageId, setActivePageId] = useState<string>(
     initialDocument.pages[0]?.id ?? ""
   );
-  const [addMenuAfterBlockId, setAddMenuAfterBlockId] = useState<string | null>(null);
+  const [addMenu, setAddMenu] = useState<{ blockId: string; anchor: HTMLElement } | null>(null);
+  const editorScrollRef = useRef<HTMLDivElement>(null);
   // Tracks which block's toolbar triggered the content-block picker
   const [contentBlockPickerAfterId, setContentBlockPickerAfterId] = useState<string | null>(null);
   // Per-block colour picker: stores the block id whose picker is open
@@ -182,6 +184,7 @@ export function ProposalEditor({
         type: "button",
         id: newId(),
         label: "Next page",
+        linkType: "page",
         targetPageId: otherPage?.id ?? "",
         style: "primary",
         alignment: "center",
@@ -204,7 +207,16 @@ export function ProposalEditor({
         return { ...p, blocks };
       }),
     });
-    setAddMenuAfterBlockId(null);
+    setAddMenu(null);
+  };
+
+  const selectPage = (pageId: string) => {
+    setActivePageId(pageId);
+    setAddMenu(null);
+    requestAnimationFrame(() => {
+      editorScrollRef.current?.scrollTo({ top: 0 });
+      editorScrollRef.current?.closest("main")?.scrollTo({ top: 0 });
+    });
   };
 
   // Update sidebar settings (logo / background colour)
@@ -235,17 +247,23 @@ export function ProposalEditor({
       <PageSidebar
         pages={doc.pages}
         activePageId={activePage.id}
-        onSelectPage={setActivePageId}
+        onSelectPage={selectPage}
         onAddPage={handleAddPage}
         onRenamePage={handleRenamePage}
         onDeletePage={readOnly ? undefined : handleDeletePage}
         onMovePage={readOnly ? undefined : handleMovePage}
         sidebar={doc.sidebar}
         onUpdateSidebar={readOnly ? undefined : updateSidebar}
+        showPageNav={doc.showPageNav === true}
+        onTogglePageNav={
+          readOnly
+            ? undefined
+            : () => updateDoc({ ...doc, showPageNav: doc.showPageNav !== true })
+        }
       />
 
       {/* Block list */}
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      <div ref={editorScrollRef} className="flex-1 overflow-y-auto px-6 py-6">
         <div className="space-y-3">
           {activePage.blocks.map((block) => (
             <div key={block.id} className="group/block relative">
@@ -299,9 +317,11 @@ export function ProposalEditor({
                 {block.type === "columns" && (
                   <ColumnBlockEditor
                     block={block}
+                    pages={doc.pages}
                     onChange={(updated) => updateBlock(activePage.id, updated)}
                     readOnly={readOnly}
                     backgroundColor={block.backgroundColor}
+                    onNavigatePage={selectPage}
                   />
                 )}
 
@@ -311,6 +331,7 @@ export function ProposalEditor({
                     pages={doc.pages}
                     onChange={(updated) => updateBlock(activePage.id, updated)}
                     readOnly={readOnly}
+                    onNavigatePage={selectPage}
                   />
                 )}
 
@@ -352,49 +373,52 @@ export function ProposalEditor({
 
               {/* Add block button after this block */}
               {!readOnly && (
-                <div className="relative flex justify-center mt-2">
+                <div className="flex justify-center mt-2">
                   <button
-                    onClick={() =>
-                      setAddMenuAfterBlockId(
-                        addMenuAfterBlockId === block.id ? null : block.id
-                      )
-                    }
+                    type="button"
+                    data-testid="add-block"
+                    onClick={(event) => {
+                      setAddMenu((current) =>
+                        current?.blockId === block.id
+                          ? null
+                          : { blockId: block.id, anchor: event.currentTarget }
+                      );
+                    }}
                     className="flex items-center gap-1 px-3 py-1 text-xs text-gray-400 hover:text-gray-600 border border-dashed border-gray-200 hover:border-gray-400 rounded-full bg-white transition-colors"
                   >
                     <Plus size={11} />
                     Add block
                   </button>
-                  {addMenuAfterBlockId === block.id && (
-                    <div className="absolute top-full mt-1 z-50">
-                      <AddBlockMenu
-                        onAddRichText={() =>
-                          addBlock(activePage.id, block.id, "richText")
-                        }
-                        onAddPricing={() =>
-                          addBlock(activePage.id, block.id, "pricing")
-                        }
-                        onAddSignature={() =>
-                          addBlock(activePage.id, block.id, "signature")
-                        }
-                        onAddColumns={() =>
-                          addBlock(activePage.id, block.id, "columns")
-                        }
-                        onAddButton={() =>
-                          addBlock(activePage.id, block.id, "button")
-                        }
-                        onClose={() => setAddMenuAfterBlockId(null)}
-                        acceptanceBlockExists={doc.pages.some((p) =>
-                          p.blocks.some((b) => b.type === "signature")
-                        )}
-                      />
-                    </div>
-                  )}
                 </div>
               )}
             </div>
           ))}
         </div>
+
+        {doc.showPageNav === true && (
+          <PageNavRow
+            pages={doc.pages}
+            activePageId={activePage.id}
+            sidebar={doc.sidebar}
+            onSelectPage={selectPage}
+          />
+        )}
       </div>
+
+      {addMenu && activePage.blocks.some((block) => block.id === addMenu.blockId) && (
+        <AddBlockMenu
+          anchor={addMenu.anchor}
+          onAddRichText={() => addBlock(activePage.id, addMenu.blockId, "richText")}
+          onAddPricing={() => addBlock(activePage.id, addMenu.blockId, "pricing")}
+          onAddSignature={() => addBlock(activePage.id, addMenu.blockId, "signature")}
+          onAddColumns={() => addBlock(activePage.id, addMenu.blockId, "columns")}
+          onAddButton={() => addBlock(activePage.id, addMenu.blockId, "button")}
+          onClose={() => setAddMenu(null)}
+          acceptanceBlockExists={doc.pages.some((p) =>
+            p.blocks.some((b) => b.type === "signature")
+          )}
+        />
+      )}
 
       {/* Page-level content block picker */}
       {!readOnly && (

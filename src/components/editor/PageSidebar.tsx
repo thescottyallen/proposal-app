@@ -17,6 +17,10 @@ interface PageSidebarProps {
   sidebar?: SidebarSettings;
   /** When provided, editing controls (logo upload, colour picker) are shown */
   onUpdateSidebar?: (settings: SidebarSettings) => void;
+  /** Whether the public page shows Back / Next under each page */
+  showPageNav?: boolean;
+  /** When provided, the Next and Back toggle is shown */
+  onTogglePageNav?: () => void;
 }
 
 export function PageSidebar({
@@ -29,6 +33,8 @@ export function PageSidebar({
   onMovePage,
   sidebar,
   onUpdateSidebar,
+  showPageNav = false,
+  onTogglePageNav,
 }: PageSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
@@ -272,6 +278,32 @@ export function PageSidebar({
             <Plus size={12} />
             Add page
           </button>
+        )}
+
+        {onTogglePageNav && (
+          <div className="flex items-center justify-between gap-2">
+            <span className={cn("text-xs", subTextClass)} title="Show Back and Next at the bottom of each page">
+              Next and Back
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showPageNav}
+              aria-label="Show Next and Back buttons"
+              onClick={onTogglePageNav}
+              className={cn(
+                "relative w-8 h-4 rounded-full transition-colors shrink-0",
+                showPageNav ? "bg-blue-600" : isDark ? "bg-white/20" : "bg-gray-300"
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform",
+                  showPageNav && "translate-x-4"
+                )}
+              />
+            </button>
+          </div>
         )}
 
         {/* Sidebar background colour */}

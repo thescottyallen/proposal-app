@@ -8,9 +8,10 @@ import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import TextAlign from "@tiptap/extension-text-align";
 import Underline from "@tiptap/extension-underline";
-import { AlignCenter, AlignLeft, AlignRight, Columns2, Grid3X3, ImageIcon, Link2, Plus, Trash2, Type, Upload, X } from "lucide-react";
-import type { ColumnBlock as ColumnBlockType, ColumnCell } from "@/lib/proposal-document";
-import { newId } from "@/lib/proposal-document";
+import { AlignCenter, AlignLeft, AlignRight, Columns2, Grid3X3, ImageIcon, Link2, MousePointerClick, Plus, Type, Upload, X } from "lucide-react";
+import type { ColumnBlock as ColumnBlockType, ColumnCell, ProposalPage } from "@/lib/proposal-document";
+import { buttonBlockFromCell, buttonFieldsFromBlock, newId } from "@/lib/proposal-document";
+import { ButtonBlockEditor, ButtonBlockView } from "./ButtonBlockEditor";
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
@@ -346,6 +347,8 @@ interface ColumnBlockEditorProps {
   onChange: (block: ColumnBlockType) => void;
   readOnly?: boolean;
   backgroundColor?: string;
+  pages?: ProposalPage[];
+  onNavigatePage?: (pageId: string) => void;
 }
 
 function makeTextCell(): ColumnCell {
@@ -380,6 +383,8 @@ export function ColumnBlockEditor({
   onChange,
   readOnly = false,
   backgroundColor,
+  pages = [],
+  onNavigatePage,
 }: ColumnBlockEditorProps) {
   // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -397,9 +402,23 @@ export function ColumnBlockEditor({
   const switchCellType = (
     rowIdx: number,
     colIdx: number,
-    type: "text" | "image"
+    type: "text" | "image" | "button"
   ) => {
     const cell = block.rows[rowIdx][colIdx];
+    if (type === "button" && !cell.button) {
+      updateCell(rowIdx, colIdx, {
+        ...cell,
+        type,
+        button: {
+          label: "Learn more",
+          targetPageId: pages[0]?.id ?? "",
+          linkType: "page",
+          style: "primary",
+          alignment: "center",
+        },
+      });
+      return;
+    }
     updateCell(rowIdx, colIdx, { ...cell, type });
   };
 
@@ -587,27 +606,38 @@ export function ColumnBlockEditor({
                             Split
                           </button>
                         )}
-                        {/* Type toggle */}
                         <button
-                          onClick={() =>
-                            switchCellType(
-                              rowIdx,
-                              colIdx,
-                              cell.type === "text" ? "image" : "text"
-                            )
-                          }
-                          className="w-5 h-5 flex items-center justify-center rounded bg-white border border-gray-200 text-gray-400 hover:text-gray-700 hover:border-gray-400 shadow-sm"
-                          title={
+                          onClick={() => switchCellType(rowIdx, colIdx, "text")}
+                          className={`w-5 h-5 flex items-center justify-center rounded border shadow-sm ${
                             cell.type === "text"
-                              ? "Switch to image"
-                              : "Switch to text"
-                          }
+                              ? "bg-blue-600 border-blue-600 text-white"
+                              : "bg-white border-gray-200 text-gray-400 hover:text-gray-700"
+                          }`}
+                          title="Text"
                         >
-                          {cell.type === "text" ? (
-                            <ImageIcon size={10} />
-                          ) : (
-                            <Type size={10} />
-                          )}
+                          <Type size={10} />
+                        </button>
+                        <button
+                          onClick={() => switchCellType(rowIdx, colIdx, "image")}
+                          className={`w-5 h-5 flex items-center justify-center rounded border shadow-sm ${
+                            cell.type === "image"
+                              ? "bg-blue-600 border-blue-600 text-white"
+                              : "bg-white border-gray-200 text-gray-400 hover:text-gray-700"
+                          }`}
+                          title="Image"
+                        >
+                          <ImageIcon size={10} />
+                        </button>
+                        <button
+                          onClick={() => switchCellType(rowIdx, colIdx, "button")}
+                          className={`w-5 h-5 flex items-center justify-center rounded border shadow-sm ${
+                            cell.type === "button"
+                              ? "bg-blue-600 border-blue-600 text-white"
+                              : "bg-white border-gray-200 text-gray-400 hover:text-gray-700"
+                          }`}
+                          title="Button"
+                        >
+                          <MousePointerClick size={10} />
                         </button>
                       </div>
                     )}
@@ -620,6 +650,22 @@ export function ColumnBlockEditor({
                           cell={cell}
                           onUpdate={(c) => updateCell(rowIdx, colIdx, c)}
                           readOnly={readOnly}
+                        />
+                      ) : cell.type === "button" ? (
+                        <ButtonBlockEditor
+                          key={`btn-${cell.id}`}
+                          embedded
+                          block={buttonBlockFromCell(cell)}
+                          pages={pages}
+                          readOnly={readOnly}
+                          onNavigatePage={onNavigatePage}
+                          onChange={(updated) =>
+                            updateCell(rowIdx, colIdx, {
+                              ...cell,
+                              type: "button",
+                              button: buttonFieldsFromBlock(updated),
+                            })
+                          }
                         />
                       ) : (
                         <ImageCell
@@ -651,9 +697,13 @@ export function ColumnBlockEditor({
 export function ColumnBlockReadOnly({
   block,
   backgroundColor,
+  pages = [],
+  onNavigatePage,
 }: {
   block: ColumnBlockType;
   backgroundColor?: string;
+  pages?: ProposalPage[];
+  onNavigatePage?: (pageId: string) => void;
 }) {
   const gridCols = block.columnCount === 3 ? "grid-cols-3" : "grid-cols-2";
   const cellBorder = block.showBorders ? "border border-gray-200" : "";
@@ -671,6 +721,13 @@ export function ColumnBlockReadOnly({
                 <div key={cell.id} className={`${cellBorder} p-2 ${spanClass(cell.colSpan ?? 1)}`}>
                   {cell.type === "text" ? (
                     <ReadOnlyTextCell content={cell.content} />
+                  ) : cell.type === "button" ? (
+                    <ButtonBlockView
+                      bare
+                      block={buttonBlockFromCell(cell)}
+                      pages={pages}
+                      onNavigatePage={onNavigatePage}
+                    />
                   ) : cell.imageUrl ? (
                     <div>
                       {/* eslint-disable-next-line @next/next/no-img-element */}

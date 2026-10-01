@@ -195,7 +195,7 @@ export default function ContentLibraryPage() {
             <p className="text-gray-500 mb-2">No content blocks yet</p>
             <p className="text-sm text-gray-400">
               Content blocks are reusable sections you can insert into any
-              proposal -- things like your standard "About Us," terms and
+              proposal -- things like your standard &ldquo;About Us,&rdquo; terms and
               conditions, or common pricing structures.
             </p>
           </div>
