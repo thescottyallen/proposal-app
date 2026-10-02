@@ -2,8 +2,9 @@
 
 import { Shell } from "@/components/ui/Shell";
 import { ProposalEditor } from "@/components/editor/ProposalEditor";
+import { StartFromChooser, type TemplateChoice } from "@/components/proposals/StartFromChooser";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import {
   ArrowLeft, Save, Building2, UserPlus, Search,
   ChevronRight, Star, User, Plus,
@@ -11,12 +12,14 @@ import {
 import Link from "next/link";
 import {
   defaultDocument,
-  migrateToDocument,
-  isProposalDocument,
-  withDefaultPageNav,
   ProposalDocument,
 } from "@/lib/proposal-document";
-import { defaultPricingSettings } from "@/lib/pricing-types";
+import type { ProposalPricingSettings } from "@/lib/pricing-types";
+import {
+  initialNewProposalStep,
+  prepareProposalFromTemplate,
+  stepAfterStart,
+} from "@/lib/proposal-start";
 
 interface Contact {
   id:     string;
@@ -32,7 +35,7 @@ interface Client {
   contacts: Contact[];
 }
 
-type Step = "client" | "contact" | "editor";
+type Step = "start" | "client" | "contact" | "editor";
 type ClientMode = "existing" | "new";
 
 function NewProposalForm() {
@@ -42,7 +45,9 @@ function NewProposalForm() {
   const urlClientId  = searchParams.get("clientId");
 
   // ── Step ─────────────────────────────────────────────────────────────────────
-  const [step, setStep] = useState<Step>(urlClientId ? "contact" : "client");
+  const [step, setStep] = useState<Step>(() =>
+    initialNewProposalStep({ templateId, clientId: urlClientId })
+  );
 
   // ── Client selection ─────────────────────────────────────────────────────────
   const [clientMode, setClientMode]         = useState<ClientMode>("existing");
@@ -76,6 +81,14 @@ function NewProposalForm() {
   const [document, setDocument]       = useState<ProposalDocument | null>(null);
   const [saving, setSaving]           = useState(false);
   const [saveError, setSaveError]     = useState<string | null>(null);
+  const [templates, setTemplates]     = useState<TemplateChoice[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(!templateId);
+  const [templatesError, setTemplatesError] = useState(false);
+  const [startChoice, setStartChoice] = useState<string | null>(null);
+  const [chosenTemplateName, setChosenTemplateName] = useState<string | null>(null);
+  const [pricingDefaults, setPricingDefaults] = useState<Partial<ProposalPricingSettings> | undefined>(undefined);
+  const [docEpoch, setDocEpoch]       = useState(0);
+  const fromTemplateRef = useRef(Boolean(templateId));
 
   // ── Load clients ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -104,41 +117,60 @@ function NewProposalForm() {
           setClientName(client.name);
           setClientEmail(main.email);
           setContactId(main.id);
-          if (!templateId) setTitle(`Proposal for ${client.name}`);
-          // Auto-advance to editor if only one contact
-          if (client.contacts.length === 1) setStep("editor");
+          if (!fromTemplateRef.current) setTitle(`Proposal for ${client.name}`);
+          // A template in the URL skips the chooser, so keep the old shortcut.
+          if (templateId && client.contacts.length === 1) setStep("editor");
         }
       })
       .catch(console.error);
   }, [urlClientId, templateId]);
 
-  // ── Business settings + document ──────────────────────────────────────────────
+  // ── Business settings ─────────────────────────────────────────────────────────
   useEffect(() => {
     fetch("/api/settings")
       .then((r) => r.json())
       .then((s) => {
-        setDocument((prev) => prev ?? defaultDocument({
+        setPricingDefaults({
           currency:     s.defaultCurrency ?? "AUD",
           roundingMode: s.roundingMode    ?? "CENTS",
-        }));
+        });
       })
-      .catch(() => { setDocument((prev) => prev ?? defaultDocument()); });
+      .catch(() => setPricingDefaults(undefined));
   }, []);
 
-  // ── Load template ─────────────────────────────────────────────────────────────
+  // ── Templates for the chooser ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (templateId) return;
+    fetch("/api/templates")
+      .then((r) => {
+        if (!r.ok) throw new Error("Couldn't load templates");
+        return r.json();
+      })
+      .then((data) => {
+        setTemplates(Array.isArray(data) ? data : []);
+        setTemplatesLoading(false);
+      })
+      .catch(() => {
+        setTemplatesError(true);
+        setTemplatesLoading(false);
+      });
+  }, [templateId]);
+
+  // ── Load template from ?template= (skips the chooser) ────────────────────────
   useEffect(() => {
     if (!templateId) return;
     fetch(`/api/templates/${templateId}`)
       .then((r) => r.json())
       .then((template) => {
-        if (template.content) {
-          const content = template.content as Record<string, unknown>;
-          const doc = isProposalDocument(content)
-            ? content
-            : migrateToDocument(content, null, defaultPricingSettings());
-          setDocument(withDefaultPageNav(doc));
+        if (template.content && typeof template.content === "object" && Object.keys(template.content).length > 0) {
+          setDocument(prepareProposalFromTemplate(template.content));
+          setDocEpoch((epoch) => epoch + 1);
         }
-        setTitle((prev) => prev === "Untitled Proposal" ? `New Proposal from ${template.name}` : prev);
+        if (typeof template.name === "string" && template.name) {
+          fromTemplateRef.current = true;
+          setChosenTemplateName(template.name);
+          setTitle((prev) => prev === "Untitled Proposal" ? `New Proposal from ${template.name}` : prev);
+        }
       })
       .catch(console.error);
   }, [templateId]);
@@ -152,7 +184,7 @@ function NewProposalForm() {
     const main = client.contacts.find((c) => c.isMain) ?? client.contacts[0];
     if (main) setSelectedContactId(main.id);
     setClientName(client.name);
-    if (!templateId) setTitle(`Proposal for ${client.name}`);
+    if (!fromTemplateRef.current) setTitle(`Proposal for ${client.name}`);
     // Skip contact step if only one contact
     if (client.contacts.length === 1 && main) {
       setClientEmail(main.email);
@@ -191,7 +223,7 @@ function NewProposalForm() {
         setContactId(contact.id);
       }
       setClientName(data.name);
-      if (!templateId) setTitle(`Proposal for ${data.name}`);
+      if (!fromTemplateRef.current) setTitle(`Proposal for ${data.name}`);
       setStep("editor");
     } catch {
       setNewCompanyError("Network error. Please try again.");
@@ -243,6 +275,51 @@ function NewProposalForm() {
 
   const handleEditorUpdate = useCallback((doc: ProposalDocument) => { setDocument(doc); }, []);
 
+  const continueFromStart = () => {
+    if (!startChoice) return;
+    if (startChoice === "scratch") {
+      fromTemplateRef.current = false;
+      setChosenTemplateName(null);
+      setDocument(defaultDocument(pricingDefaults));
+      setTitle((prev) =>
+        prev.startsWith("New Proposal from ")
+          ? (clientName ? `Proposal for ${clientName}` : "Untitled Proposal")
+          : prev
+      );
+    } else {
+      const template = templates.find((item) => item.id === startChoice);
+      if (!template) return;
+      fromTemplateRef.current = true;
+      setChosenTemplateName(template.name);
+      setDocument(prepareProposalFromTemplate(template.content));
+      setTitle(`New Proposal from ${template.name}`);
+    }
+    setDocEpoch((epoch) => epoch + 1);
+
+    if (urlClientId && selectedClient) {
+      const next = stepAfterStart({
+        hasClient: true,
+        contactCount: selectedClient.contacts.length,
+      });
+      const main = selectedClient.contacts.find((contact) => contact.isMain) ?? selectedClient.contacts[0];
+      if (main) {
+        setSelectedContactId(main.id);
+        if (next === "editor") {
+          setClientEmail(main.email);
+          setContactId(main.id);
+        }
+      }
+      setStep(next);
+      return;
+    }
+    setStep("client");
+  };
+
+  useEffect(() => {
+    if (step !== "editor" || document) return;
+    setDocument(defaultDocument(pricingDefaults));
+  }, [step, document, pricingDefaults]);
+
   const handleSave = async () => {
     if (!document) return;
     setSaving(true);
@@ -256,7 +333,6 @@ function NewProposalForm() {
           clientName,
           clientEmail,
           content:    document,
-          templateId: templateId      || undefined,
           clientId:   selectedClientId || undefined,
           contactId:  contactId       || undefined,
         }),
@@ -279,7 +355,24 @@ function NewProposalForm() {
     );
   });
 
-  // ── Step 1: Client ────────────────────────────────────────────────────────────
+  // ── Step 1: Start from ────────────────────────────────────────────────────────
+  if (step === "start") {
+    return (
+      <Shell>
+        <StartFromChooser
+          templates={templates}
+          loading={templatesLoading}
+          loadError={templatesError}
+          selectedId={startChoice}
+          onSelect={setStartChoice}
+          onContinue={continueFromStart}
+          onBack={() => router.push("/")}
+        />
+      </Shell>
+    );
+  }
+
+  // ── Step 2: Client ────────────────────────────────────────────────────────────
   if (step === "client") {
     return (
       <Shell>
@@ -287,12 +380,20 @@ function NewProposalForm() {
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm w-full max-w-lg">
             <div className="px-6 py-5 border-b border-gray-200">
               <div className="flex items-center gap-3 mb-1">
-                <Link href="/" className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
-                  <ArrowLeft size={16} />
-                </Link>
+                {templateId ? (
+                  <Link href="/" className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+                    <ArrowLeft size={16} />
+                  </Link>
+                ) : (
+                  <button type="button" onClick={() => setStep("start")} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" aria-label="Back">
+                    <ArrowLeft size={16} />
+                  </button>
+                )}
                 <h1 className="text-base font-semibold text-gray-900">Who is this proposal for?</h1>
               </div>
-              {templateId && <p className="text-xs text-gray-500 ml-9">Using selected template</p>}
+              {chosenTemplateName && (
+                <p className="text-xs text-gray-500 ml-9">Starting from {chosenTemplateName}</p>
+              )}
             </div>
 
             <div className="flex border-b border-gray-200">
@@ -613,7 +714,7 @@ function NewProposalForm() {
           </div>
 
           <div className="flex flex-1 overflow-hidden bg-gray-50">
-            <ProposalEditor initialDocument={document} onUpdate={handleEditorUpdate} />
+            <ProposalEditor key={docEpoch} initialDocument={document} onUpdate={handleEditorUpdate} />
           </div>
         </div>
       </div>
