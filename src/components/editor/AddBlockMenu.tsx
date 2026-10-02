@@ -1,8 +1,10 @@
 "use client";
 
 import { Columns2, DollarSign, FileText, MousePointerClick, PenLine, X } from "lucide-react";
+import { AnchoredPanel } from "./AnchoredPanel";
 
 interface AddBlockMenuProps {
+  anchor: HTMLElement;
   onAddRichText: () => void;
   onAddPricing: () => void;
   onAddSignature: () => void;
@@ -13,6 +15,7 @@ interface AddBlockMenuProps {
 }
 
 export function AddBlockMenu({
+  anchor,
   onAddRichText,
   onAddPricing,
   onAddSignature,
@@ -22,10 +25,11 @@ export function AddBlockMenu({
   acceptanceBlockExists = false,
 }: AddBlockMenuProps) {
   return (
-    <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div className="absolute left-1/2 -translate-x-1/2 top-2 z-50 w-64 bg-white rounded-xl shadow-lg border border-gray-200 p-2">
+    <AnchoredPanel anchor={anchor} onClose={onClose} className="w-64">
+      <div
+        data-testid="add-block-menu"
+        className="bg-white rounded-xl shadow-lg border border-gray-200 p-2"
+      >
         <div className="flex items-center justify-between px-2 py-1.5 mb-1">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
             Add block
@@ -129,6 +133,6 @@ export function AddBlockMenu({
           </div>
         </button>
       </div>
-    </>
+    </AnchoredPanel>
   );
 }

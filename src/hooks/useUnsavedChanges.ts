@@ -17,7 +17,9 @@ import { useEffect, useRef, useCallback } from "react";
  */
 export function useUnsavedChanges(hasChanges: boolean) {
   const guardEnabled = useRef(hasChanges);
-  guardEnabled.current = hasChanges;
+  useEffect(() => {
+    guardEnabled.current = hasChanges;
+  }, [hasChanges]);
 
   // Browser-level: beforeunload
   useEffect(() => {

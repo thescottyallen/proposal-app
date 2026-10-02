@@ -41,7 +41,7 @@ export interface SignatureBlock {
 
 export interface ColumnCell {
   id: string;
-  type: "text" | "image";
+  type: "text" | "image" | "button";
   /** TipTap JSON doc — used when type === "text" */
   content: Record<string, unknown>;
   /** Public URL or base64 data URL — used when type === "image" */
@@ -52,6 +52,16 @@ export interface ColumnCell {
    * The sum of colSpan values in a row must equal the block's columnCount.
    */
   colSpan?: number;
+  /** Button settings when type === "button" */
+  button?: {
+    label: string;
+    /** Page id, or a legacy external URL */
+    targetPageId: string;
+    linkType?: "url" | "page";
+    href?: string;
+    style?: "primary" | "secondary" | "outline";
+    alignment?: "left" | "center" | "right";
+  };
 }
 
 export interface ColumnBlock {
@@ -73,8 +83,18 @@ export interface ButtonBlock {
   id: string;
   /** Label displayed on the button */
   label: string;
-  /** Page ID to navigate to, or an external URL (starts with http) */
+  /**
+   * Page id when the button links to a page in this proposal.
+   * Older buttons stored either a page id or an http(s) URL in this field.
+   */
   targetPageId: string;
+  /**
+   * "page" moves the reader to another page in this proposal.
+   * "url" opens a web address. Omitted on buttons saved before the choice existed.
+   */
+  linkType?: "url" | "page";
+  /** Web address when linkType is "url". */
+  href?: string;
   /** Visual style */
   style?: "primary" | "secondary" | "outline";
   /** Horizontal alignment */
@@ -108,6 +128,12 @@ export interface ProposalDocument {
   pages: ProposalPage[];
   /** Optional sidebar branding — logo + background colour */
   sidebar?: SidebarSettings;
+  /**
+   * Show Back / Next under each page on the public proposal.
+   * Omitted on documents created before this setting, which stay off.
+   * New proposals set this to true.
+   */
+  showPageNav?: boolean;
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -175,6 +201,7 @@ export function defaultDocument(
   const settings = { ...defaultPricingSettings(), ...pricingSettingsOverrides };
   return {
     version: 2,
+    showPageNav: true,
     pages: [
       {
         id: newId(),
@@ -415,6 +442,111 @@ export function selectOption(
       }),
     })),
   };
+}
+
+/** True when the public page should show Back / Next. Missing means off. */
+export function showPageNavigation(doc: ProposalDocument): boolean {
+  return doc.showPageNav === true;
+}
+
+/**
+ * New proposals turn page navigation on unless the document already chose.
+ * Existing saved documents are left untouched.
+ */
+export function withDefaultPageNav(doc: ProposalDocument): ProposalDocument {
+  if (doc.showPageNav === undefined) return { ...doc, showPageNav: true };
+  return doc;
+}
+
+const HTTP_URL = /^https?:\/\//i;
+
+export type ResolvedButtonLink =
+  | { kind: "url"; href: string }
+  | { kind: "page"; pageId: string; pageName: string }
+  | { kind: "missing-page"; pageId: string }
+  | { kind: "unset" };
+
+/** "url" or "page", including buttons saved before linkType existed. */
+export function buttonLinkType(block: ButtonBlock): "url" | "page" {
+  if (block.linkType === "url" || block.linkType === "page") return block.linkType;
+  const target = (block.targetPageId ?? "").trim();
+  if (HTTP_URL.test(target)) return "url";
+  return "page";
+}
+
+/** Web address for a button, including the legacy URL stored on targetPageId. */
+export function buttonWebAddress(block: ButtonBlock): string {
+  if (buttonLinkType(block) === "url") {
+    if (typeof block.href === "string" && block.href.length > 0) return block.href;
+    const target = (block.targetPageId ?? "").trim();
+    if (HTTP_URL.test(target)) return target;
+    return block.href ?? "";
+  }
+  return "";
+}
+
+/**
+ * Where a button goes. Page targets are matched by id, so renaming a page
+ * does not break the link. A deleted page is "missing-page".
+ */
+export function resolveButtonLink(
+  block: ButtonBlock,
+  pages: { id: string; name: string }[]
+): ResolvedButtonLink {
+  if (buttonLinkType(block) === "url") {
+    const href = buttonWebAddress(block).trim();
+    if (!href || href === "https://" || href === "http://") return { kind: "unset" };
+    return { kind: "url", href };
+  }
+  const pageId = (block.targetPageId ?? "").trim();
+  if (!pageId || HTTP_URL.test(pageId)) return { kind: "unset" };
+  const page = pages.find((p) => p.id === pageId);
+  if (!page) return { kind: "missing-page", pageId };
+  return { kind: "page", pageId, pageName: page.name };
+}
+
+/** Build a button block from a column cell so column buttons navigate the same way. */
+export function buttonBlockFromCell(cell: ColumnCell): ButtonBlock {
+  const button = cell.button;
+  return {
+    type: "button",
+    id: cell.id,
+    label: button?.label ?? "",
+    targetPageId: button?.targetPageId ?? "",
+    linkType: button?.linkType,
+    href: button?.href,
+    style: button?.style,
+    alignment: button?.alignment,
+  };
+}
+
+export function buttonFieldsFromBlock(
+  block: ButtonBlock
+): NonNullable<ColumnCell["button"]> {
+  return {
+    label: block.label,
+    targetPageId: block.targetPageId,
+    linkType: block.linkType,
+    href: block.href,
+    style: block.style,
+    alignment: block.alignment,
+  };
+}
+
+/** Hash used on the public proposal so a page can be linked and restored. */
+export function pageHash(pageId: string): string {
+  return `page-${pageId}`;
+}
+
+/** Read a page id from a location hash. Unknown ids return null. */
+export function pageIdFromHash(
+  hash: string,
+  pages: { id: string }[]
+): string | null {
+  const raw = hash.replace(/^#/, "");
+  if (!raw) return null;
+  const id = raw.startsWith("page-") ? raw.slice("page-".length) : raw;
+  return pages.some((p) => p.id === id) ? id : null;
 }
 
 /** True only if every option group in the document has exactly one selection. */
