@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   sendAcceptanceConfirmationToClient,
@@ -9,7 +10,10 @@ import { roleFromMetadata } from "@/lib/roles";
 import {
   isProposalDocument,
   applyClientChoices,
+  applyPaymentChoices,
+  allPaymentChoicesResolved,
   getAllPricingBlocks,
+  paymentAcceptanceRecords,
   ProposalDocument,
 } from "@/lib/proposal-document";
 import type { ProposalPricingData } from "@/lib/pricing-types";
@@ -45,10 +49,11 @@ export async function POST(
   }
 
   const body = await request.json();
-  const { signerName, clientIncluded, clientAbn } = body as {
+  const { signerName, clientIncluded, clientAbn, paymentChoices } = body as {
     signerName:     string;
     clientIncluded: Record<string, boolean>;
     clientAbn?:     string | null;
+    paymentChoices?: Record<string, unknown>;
   };
 
   if (!signerName?.trim()) {
@@ -67,16 +72,27 @@ export async function POST(
   let contentUpdate: Record<string, unknown> | undefined;
   let pricingDataUpdate: object | undefined;
   let totalValueUpdate: number | undefined;
+  let paymentRecords: ReturnType<typeof paymentAcceptanceRecords> = [];
 
   if (isProposalDocument(rawContent)) {
-    // New format: update clientIncluded within the document's pricing blocks
-    const updatedDoc = applyClientChoices(
+    // New format: update clientIncluded within the document's pricing blocks,
+    // then record which monthly or upfront option they picked.
+    const withChoices = applyClientChoices(
       rawContent as unknown as ProposalDocument,
-      clientIncluded
+      clientIncluded ?? {}
     );
+    const updatedDoc = applyPaymentChoices(withChoices, paymentChoices ?? {});
+    if (!allPaymentChoicesResolved(updatedDoc)) {
+      return NextResponse.json(
+        { error: "Please choose monthly or upfront before accepting." },
+        { status: 400 }
+      );
+    }
     contentUpdate = updatedDoc as unknown as Record<string, unknown>;
-    // Recompute the accepted total from the client's final choices (so a chosen
-    // payment option, not the sum of alternatives, is what gets recorded).
+    paymentRecords = paymentAcceptanceRecords(updatedDoc);
+    // Recompute the accepted total from the client's final choices. The figure
+    // is GST-inclusive: a payment choice contributes that option's total, and
+    // a choose-one block contributes the selected line, not the sum of both.
     let sum = 0;
     for (const block of getAllPricingBlocks(updatedDoc)) {
       sum += computePricingTotals(block.pricingData, block.pricingSettings).grandTotal ?? 0;
@@ -120,7 +136,8 @@ export async function POST(
         acceptedAt:     acceptedAt.toISOString(),
         clientIncluded,
         clientAbn:      clientAbn?.trim() || null,
-      },
+        ...(paymentRecords.length > 0 ? { paymentChoices: paymentRecords } : {}),
+      } as unknown as Prisma.InputJsonValue,
     },
   });
 
@@ -194,7 +211,7 @@ export async function POST(
         clientName:    proposal.clientName,
         signerName,
         proposalTitle: proposal.title,
-        totalValue:    proposal.totalValue,
+        totalValue:    totalValueUpdate ?? proposal.totalValue,
         currency:      proposal.currency,
         proposalId:    proposal.id,
         acceptedAt:    acceptedAtLabel,

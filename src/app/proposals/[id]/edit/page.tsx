@@ -99,6 +99,7 @@ interface ProposalEventMeta {
     to?: string;
     cc?: string[];
     bcc?: string[];
+    paymentChoices?: { label?: string }[];
   } | null;
 }
 
@@ -121,12 +122,19 @@ function describeEvent(ev: ProposalEventMeta): string {
       ? `Preview emailed to ${ev.metadata.to} (${copies.join(", ")})`
       : `Preview emailed to ${ev.metadata.to}`;
   }
+  if (ev.eventType === "accepted") {
+    const labels = (ev.metadata?.paymentChoices ?? [])
+      .map((choice) => choice.label)
+      .filter((label): label is string => Boolean(label));
+    return labels.length > 0
+      ? `Proposal was accepted — ${labels.join("; ")}`
+      : "Proposal was accepted";
+  }
   const labels: Record<string, string> = {
     opened:         "Client opened the proposal",
     viewed_section: "Client viewed a section",
     forwarded:      "Proposal was forwarded",
     signed:         "Proposal was signed",
-    accepted:       "Proposal was accepted",
   };
   return labels[ev.eventType] ?? ev.eventType;
 }

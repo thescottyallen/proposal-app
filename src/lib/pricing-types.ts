@@ -6,6 +6,8 @@
 export type LineItemType = "fixed" | "hourly" | "day" | "retainer" | "milestone";
 export type DiscountType = "percentage" | "fixed";
 export type DepositType  = "percentage" | "fixed";
+/** Client's choice when a pricing block offers monthly or upfront payment. */
+export type PaymentChoice = "monthly" | "upfront";
 
 export interface PricingSection {
   id:    string;
@@ -83,6 +85,25 @@ export interface ProposalPricingSettings {
   fixedTermMonths:    number | null;
   paymentTerms:       PaymentTerms;
   latePaymentClause:  string | null;
+  /**
+   * Offer the same engagement as a monthly payment (with a minimum term) or
+   * one upfront payment. Missing means off, so older proposals are unchanged.
+   */
+  paymentOptionsEnabled?: boolean;
+  /** Ex-GST amount charged each month. */
+  paymentMonthlyAmount?: number;
+  /** Minimum number of monthly payments. */
+  paymentMinimumMonths?: number;
+  /** Discount off the minimum-term total when the client pays upfront. */
+  paymentUpfrontDiscountType?: DiscountType | null;
+  paymentUpfrontDiscountValue?: number | null;
+  /**
+   * Replaces the calculated upfront price when set.
+   * Null or omitted means use the calculated price.
+   */
+  paymentUpfrontOverride?: number | null;
+  /** Chosen on the public page. Null until the client picks one. */
+  selectedPaymentOption?: PaymentChoice | null;
 }
 
 // ─── BusinessSettings type ────────────────────────────────────────────────────

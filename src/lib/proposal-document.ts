@@ -8,10 +8,12 @@
 import {
   ProposalPricingData,
   ProposalPricingSettings,
+  PaymentChoice,
   defaultPricingData,
   defaultPricingSettings,
   stripInternalFields,
 } from "@/lib/pricing-types";
+import { paymentChoiceSnapshot, type PaymentChoiceSnapshot } from "@/lib/utils";
 
 // ─── Block types ──────────────────────────────────────────────────────────────
 
@@ -557,4 +559,84 @@ export function allOptionGroupsResolved(doc: ProposalDocument): boolean {
     if (selectedCount !== 1) return false;
   }
   return true;
+}
+
+function isPaymentChoice(value: unknown): value is PaymentChoice {
+  return value === "monthly" || value === "upfront";
+}
+
+/** Drop a saved monthly/upfront choice so the client has to pick on the public page. */
+export function clearPaymentSelections(doc: ProposalDocument): ProposalDocument {
+  return {
+    ...doc,
+    pages: doc.pages.map((page) => ({
+      ...page,
+      blocks: page.blocks.map((block) => {
+        if (block.type !== "pricing" || block.pricingSettings.paymentOptionsEnabled !== true) {
+          return block;
+        }
+        return {
+          ...block,
+          pricingSettings: { ...block.pricingSettings, selectedPaymentOption: null },
+        };
+      }),
+    })),
+  };
+}
+
+/** Record the client's monthly or upfront choice on one pricing block. */
+export function selectPaymentOption(
+  doc: ProposalDocument,
+  blockId: string,
+  choice: PaymentChoice
+): ProposalDocument {
+  return applyPaymentChoices(doc, { [blockId]: choice });
+}
+
+/** Apply the choices sent with acceptance. Blocks without the feature are left alone. */
+export function applyPaymentChoices(
+  doc: ProposalDocument,
+  choices: Record<string, unknown>
+): ProposalDocument {
+  return {
+    ...doc,
+    pages: doc.pages.map((page) => ({
+      ...page,
+      blocks: page.blocks.map((block) => {
+        if (block.type !== "pricing" || block.pricingSettings.paymentOptionsEnabled !== true) {
+          return block;
+        }
+        const choice = choices[block.id];
+        if (!isPaymentChoice(choice)) return block;
+        return {
+          ...block,
+          pricingSettings: { ...block.pricingSettings, selectedPaymentOption: choice },
+        };
+      }),
+    })),
+  };
+}
+
+/** True when every payment-options block has a monthly or upfront choice. */
+export function allPaymentChoicesResolved(doc: ProposalDocument): boolean {
+  for (const block of getAllPricingBlocks(doc)) {
+    if (block.pricingSettings.paymentOptionsEnabled !== true) continue;
+    if (!isPaymentChoice(block.pricingSettings.selectedPaymentOption)) return false;
+  }
+  return true;
+}
+
+export interface PaymentAcceptanceRecord extends PaymentChoiceSnapshot {
+  blockId: string;
+}
+
+/** Choice and amounts to store on the acceptance event. */
+export function paymentAcceptanceRecords(doc: ProposalDocument): PaymentAcceptanceRecord[] {
+  const records: PaymentAcceptanceRecord[] = [];
+  for (const block of getAllPricingBlocks(doc)) {
+    const snapshot = paymentChoiceSnapshot(block.pricingSettings);
+    if (!snapshot) continue;
+    records.push({ blockId: block.id, ...snapshot });
+  }
+  return records;
 }
