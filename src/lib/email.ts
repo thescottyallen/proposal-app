@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { agreedSummaryHtml, type AgreedSummary } from "@/lib/agreed-summary";
 import { buildOutreachIntroHtml } from "@/lib/email-greeting";
 import { emailHeaderLogoHtml } from "@/lib/email-layout";
 
@@ -93,18 +94,16 @@ interface AcceptanceClientParams {
   signerName:      string;
   businessName:    string;
   publicUrl:       string;
+  agreed:          AgreedSummary;
   customSubject?:  string;
   customMessage?:  string;
+  logoUrl?:        string;
 }
 
-export async function sendAcceptanceConfirmationToClient({
-  to, clientName, proposalTitle, signerName, businessName, publicUrl,
-  customSubject, customMessage,
-}: AcceptanceClientParams) {
-  const subject = customSubject
-    ? customSubject.replace("{title}", proposalTitle)
-    : `You accepted: ${proposalTitle}`;
-
+export function acceptanceClientEmailHtml({
+  clientName, proposalTitle, signerName, businessName, publicUrl, agreed,
+  customMessage, logoUrl,
+}: Omit<AcceptanceClientParams, "to" | "customSubject">): string {
   const bodyParagraph = customMessage
     ? `<p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">${customMessage.replace(/\n/g, "<br/>").replace("{title}", proposalTitle).replace("{business}", businessName)}</p>`
     : `<p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">
@@ -112,19 +111,33 @@ export async function sendAcceptanceConfirmationToClient({
         Your electronic signature has been recorded with a timestamp.
       </p>`;
 
-  const { error } = await resend.emails.send({
-    from:    FROM,
-    to:      [to],
-    subject,
-    html: emailWrapper("Proposal accepted", `
+  return emailWrapper("Proposal accepted", `
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">Hi ${clientName || signerName},</p>
       ${bodyParagraph}
+      ${agreedSummaryHtml(agreed)}
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
         You can view the accepted proposal at any time using the link below.
       </p>
       ${ctaButton(publicUrl, "View Accepted Proposal")}
       ${fallbackLink(publicUrl)}
-    `),
+    `, logoUrl);
+}
+
+export async function sendAcceptanceConfirmationToClient({
+  to, clientName, proposalTitle, signerName, businessName, publicUrl, agreed,
+  customSubject, customMessage,
+}: AcceptanceClientParams) {
+  const subject = customSubject
+    ? customSubject.replace("{title}", proposalTitle)
+    : `You accepted: ${proposalTitle}`;
+
+  const { error } = await resend.emails.send({
+    from:    FROM,
+    to:      [to],
+    subject,
+    html: acceptanceClientEmailHtml({
+      clientName, proposalTitle, signerName, businessName, publicUrl, agreed, customMessage,
+    }),
   });
 
   if (error) console.error("Failed to send client acceptance confirmation:", error.message);
@@ -137,38 +150,39 @@ interface AcceptanceOwnerParams {
   clientName:    string;
   signerName:    string;
   proposalTitle: string;
-  totalValue:    number | null;
-  currency:      string;
   proposalId:    string;
-  acceptedAt:    string;
+  agreed:        AgreedSummary;
+  logoUrl?:      string;
+}
+
+export function acceptanceOwnerEmailHtml({
+  clientName, signerName, proposalTitle, proposalId, agreed, logoUrl,
+}: Omit<AcceptanceOwnerParams, "ownerEmail">): string {
+  const editUrl = `${APP_URL}/proposals/${proposalId}/edit`;
+  const who = signerName || clientName || "Your client";
+
+  return emailWrapper("Proposal accepted", `
+      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">Great news.</p>
+      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">
+        <strong>${who}</strong> has accepted
+        <strong>${proposalTitle}</strong>.
+      </p>
+      <p style="font-size:15px;color:#2D2A26;margin:0 0 12px 0;">Signed by: <strong>${signerName}</strong></p>
+      ${agreedSummaryHtml(agreed)}
+      ${ctaButton(editUrl, "View Proposal")}
+    `, logoUrl);
 }
 
 export async function sendAcceptanceNotificationToOwner({
-  ownerEmail, clientName, signerName, proposalTitle,
-  totalValue, currency, proposalId, acceptedAt,
+  ownerEmail, clientName, signerName, proposalTitle, proposalId, agreed,
 }: AcceptanceOwnerParams) {
-  const editUrl   = `${APP_URL}/proposals/${proposalId}/edit`;
-  const valueText = totalValue
-    ? `<p style="font-size:15px;color:#2D2A26;margin:0 0 8px 0;">Value: <strong>${currency} ${totalValue.toLocaleString("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></p>`
-    : "";
-
   const { error } = await resend.emails.send({
     from:    FROM,
     to:      [ownerEmail],
     subject: `Accepted: ${proposalTitle}`,
-    html: emailWrapper("Proposal accepted", `
-      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">Great news.</p>
-      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">
-        <strong>${signerName || clientName || "Your client"}</strong> has accepted
-        <strong>${proposalTitle}</strong>.
-      </p>
-      <div style="background:#FFE9A0;border:1.5px solid #1A1A1A;border-radius:10px;padding:16px 20px;margin:0 0 24px 0;">
-        <p style="font-size:15px;color:#2D2A26;margin:0 0 8px 0;">Signed by: <strong>${signerName}</strong></p>
-        ${valueText}
-        <p style="font-size:13px;color:#6b7280;margin:0;">Accepted at: ${acceptedAt}</p>
-      </div>
-      ${ctaButton(editUrl, "View Proposal")}
-    `),
+    html: acceptanceOwnerEmailHtml({
+      clientName, signerName, proposalTitle, proposalId, agreed,
+    }),
   });
 
   if (error) console.error("Failed to send owner acceptance notification:", error.message);
@@ -249,7 +263,7 @@ export async function sendFollowUpEmail({
 
 // ─── HTML helpers ─────────────────────────────────────────────────────────────
 
-function emailWrapper(title: string, body: string): string {
+function emailWrapper(title: string, body: string, logoUrl: string = LOGO_URL): string {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -259,7 +273,7 @@ function emailWrapper(title: string, body: string): string {
 <body style="margin:0;padding:0;background:#FAF1DD;font-family:'Inter','Helvetica Neue',Arial,sans-serif;color:#2D2A26;">
   <div style="max-width:560px;margin:40px auto;background:#FFFCF4;border:1.5px solid #1A1A1A;border-radius:14px;overflow:hidden;">
     <div style="background:#FBD34D;padding:22px 40px;border-bottom:1.5px solid #1A1A1A;">
-      ${emailHeaderLogoHtml(LOGO_URL)}
+      ${emailHeaderLogoHtml(logoUrl)}
     </div>
     <div style="padding:32px 40px;">
       <h1 style="margin:0 0 20px 0;font-family:'Montserrat','Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;line-height:1.2;color:#1A1A1A;">${title}<span style="color:#FBD34D;">.</span></h1>
