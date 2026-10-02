@@ -29,6 +29,8 @@ import {
 } from "@/lib/proposal-document";
 import type { PaymentChoice, ProposalPricingSettings } from "@/lib/pricing-types";
 import { effectivePaymentChoice, formatDate } from "@/lib/utils";
+import type { AgreedSummary } from "@/lib/agreed-summary";
+import { AgreedSummaryView } from "@/components/proposal/AgreedSummaryView";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -70,6 +72,8 @@ interface BusinessProps {
 interface Props {
   proposal: ProposalProps;
   business: BusinessProps;
+  /** Stored at acceptance. Null until the client accepts. */
+  agreedSummary?: AgreedSummary | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -145,6 +149,7 @@ function SignatureSection({
   preview,
   onAccepted,
   message,
+  agreed,
 }: {
   proposalId: string;
   clientEmail: string;
@@ -154,6 +159,7 @@ function SignatureSection({
   preview?: boolean;
   onAccepted: (signerName: string, clientAbn: string) => Promise<void>;
   message?: string;
+  agreed?: AgreedSummary | null;
 }) {
   const [signerName, setSignerName] = useState("");
   const [abn, setAbn]               = useState("");
@@ -186,9 +192,10 @@ function SignatureSection({
         <CheckCircle size={32} className="text-green-500 mx-auto mb-3" />
         <h2 className="text-base font-semibold text-gray-900 mb-1">Accepted</h2>
         <p className="text-sm text-gray-500">
-          Thank you, {signerName || ""}. Your acceptance has been recorded and a
+          Thank you{signerName ? `, ${signerName}` : ""}. Your acceptance has been recorded and a
           confirmation sent to {clientEmail}.
         </p>
+        {agreed && <AgreedSummaryView summary={agreed} />}
       </div>
     );
   }
@@ -438,7 +445,7 @@ function MobilePageBar({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export function PublicProposalView({ proposal, business }: Props) {
+export function PublicProposalView({ proposal, business, agreedSummary = null }: Props) {
   // Resolve the ProposalDocument (migrate legacy if needed)
   const rawContent = proposal.content as Record<string, unknown>;
   const resolvedDoc: ProposalDocument = isProposalDocument(rawContent)
@@ -463,6 +470,7 @@ export function PublicProposalView({ proposal, business }: Props) {
   );
   const [hashReady, setHashReady] = useState(false);
   const [accepted, setAccepted] = useState(proposal.status === "ACCEPTED");
+  const [agreed, setAgreed] = useState<AgreedSummary | null>(agreedSummary);
   const pagesRef = useRef(initialDoc.pages);
   useEffect(() => {
     pagesRef.current = doc.pages;
@@ -606,6 +614,7 @@ export function PublicProposalView({ proposal, business }: Props) {
     if (!res.ok) {
       throw new Error(data.error || "Failed to accept proposal.");
     }
+    if (data.agreed) setAgreed(data.agreed);
     setAccepted(true);
   };
 
@@ -667,6 +676,7 @@ export function PublicProposalView({ proposal, business }: Props) {
           preview={proposal.status === "DRAFT"}
           onAccepted={handleAccept}
           message={block.message}
+          agreed={accepted || proposal.status === "ACCEPTED" ? agreed : null}
         />
       );
     }
@@ -699,6 +709,8 @@ export function PublicProposalView({ proposal, business }: Props) {
 
   // ─── Status banners ──────────────────────────────────────────────────────────
 
+  const activePageHasSignature = activePage?.blocks.some((block) => block.type === "signature") ?? false;
+
   const statusBanners = (
     <>
       {proposal.status === "DRAFT" && (
@@ -717,6 +729,9 @@ export function PublicProposalView({ proposal, business }: Props) {
             {proposal.clientEmail}.
           </p>
         </div>
+      )}
+      {accepted && agreed && !activePageHasSignature && (
+        <AgreedSummaryView summary={agreed} />
       )}
       {isExpired && (
         <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
