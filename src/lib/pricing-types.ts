@@ -102,6 +102,12 @@ export interface ProposalPricingSettings {
    * Null or omitted means use the calculated price.
    */
   paymentUpfrontOverride?: number | null;
+  /**
+   * Optional line under each public choice. Blank or missing shows nothing.
+   * Older proposals don't have these fields.
+   */
+  paymentMonthlyIncluded?: string | null;
+  paymentUpfrontIncluded?: string | null;
   /** Chosen on the public page. Null until the client picks one. */
   selectedPaymentOption?: PaymentChoice | null;
 }

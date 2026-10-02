@@ -9,10 +9,12 @@ import {
 import {
   computePaymentQuote,
   computePricingTotals,
+  describeAcceptedPaymentChoice,
   displayedLineAmount,
   formatCurrency,
   monthlyOptionLabel,
   paymentChoiceSnapshot,
+  paymentIncludedText,
   upfrontOptionLabel,
 } from "./utils.ts";
 import {
@@ -213,6 +215,7 @@ describe("payment options", () => {
     assert.equal(record.subtotal, 4195);
     assert.equal(record.gstAmount, 419.5);
     assert.equal(record.total, 4614.5);
+    assert.equal(record.included, null);
     assert.equal(paymentChoiceSnapshot(block.pricingSettings)?.label, record.label);
 
     const cleared = clearPaymentSelections(chosen);
@@ -224,5 +227,43 @@ describe("payment options", () => {
       assert.equal(appliedBlock.pricingSettings.selectedPaymentOption, "monthly");
     }
     assert.deepEqual(applyPaymentChoices(document, { price: "nope" }), document);
+  });
+
+  it("keeps line items when a payment choice is recorded, and stores what's included", () => {
+    const items = [
+      defaultPricingItem({ id: "kept", description: "Traction Lab", unitPrice: 1500 }),
+    ];
+    const included = "Weekly sessions, dashboard access, between-session support";
+    const document = docWith(paymentSettings({
+      paymentUpfrontOverride: 4195,
+      paymentMonthlyIncluded: `  ${included}  `,
+      paymentUpfrontIncluded: "   ",
+    }), items);
+
+    const monthly = selectPaymentOption(document, "price", "monthly");
+    const monthlyBlock = monthly.pages[0].blocks[0];
+    assert.equal(monthlyBlock.type, "pricing");
+    if (monthlyBlock.type !== "pricing") return;
+    assert.deepEqual(monthlyBlock.pricingData.items, items);
+    assert.equal(paymentIncludedText(monthlyBlock.pricingSettings.paymentMonthlyIncluded), included);
+    assert.equal(paymentIncludedText(monthlyBlock.pricingSettings.paymentUpfrontIncluded), null);
+
+    const [record] = paymentAcceptanceRecords(monthly);
+    assert.equal(record.option, "monthly");
+    assert.equal(record.included, included);
+    assert.equal(
+      describeAcceptedPaymentChoice(record),
+      `${record.label} — ${included}`
+    );
+
+    const upfront = selectPaymentOption(document, "price", "upfront");
+    const [upfrontRecord] = paymentAcceptanceRecords(upfront);
+    assert.equal(upfrontRecord.included, null);
+    assert.equal(describeAcceptedPaymentChoice(upfrontRecord), upfrontRecord.label);
+    const upfrontBlock = upfront.pages[0].blocks[0];
+    assert.equal(upfrontBlock.type, "pricing");
+    if (upfrontBlock.type === "pricing") {
+      assert.deepEqual(upfrontBlock.pricingData.items, items);
+    }
   });
 });

@@ -11,7 +11,7 @@ import {
   BookmarkPlus, Check, Mail, X, Link2, Lock, History, XCircle, RotateCcw, Eye,
 } from "lucide-react";
 import Link from "next/link";
-import { getStatusColor } from "@/lib/utils";
+import { describeAcceptedPaymentChoice, getStatusColor } from "@/lib/utils";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import {
   ProposalDocument,
@@ -99,7 +99,7 @@ interface ProposalEventMeta {
     to?: string;
     cc?: string[];
     bcc?: string[];
-    paymentChoices?: { label?: string }[];
+    paymentChoices?: { label?: string; included?: string | null }[];
   } | null;
 }
 
@@ -124,7 +124,7 @@ function describeEvent(ev: ProposalEventMeta): string {
   }
   if (ev.eventType === "accepted") {
     const labels = (ev.metadata?.paymentChoices ?? [])
-      .map((choice) => choice.label)
+      .map((choice) => describeAcceptedPaymentChoice(choice))
       .filter((label): label is string => Boolean(label));
     return labels.length > 0
       ? `Proposal was accepted — ${labels.join("; ")}`

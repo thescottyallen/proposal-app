@@ -1,5 +1,6 @@
 import { Resend } from "resend";
 import { buildOutreachIntroHtml } from "@/lib/email-greeting";
+import { emailHeaderLogoHtml } from "@/lib/email-layout";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM   = "The Product Bus <hello@theproductbus.com>";
@@ -258,7 +259,7 @@ function emailWrapper(title: string, body: string): string {
 <body style="margin:0;padding:0;background:#FAF1DD;font-family:'Inter','Helvetica Neue',Arial,sans-serif;color:#2D2A26;">
   <div style="max-width:560px;margin:40px auto;background:#FFFCF4;border:1.5px solid #1A1A1A;border-radius:14px;overflow:hidden;">
     <div style="background:#FBD34D;padding:22px 40px;border-bottom:1.5px solid #1A1A1A;">
-      <img src="${LOGO_URL}" alt="The Product Bus" height="30" style="display:block;border:0;height:30px;width:auto;" />
+      ${emailHeaderLogoHtml(LOGO_URL)}
     </div>
     <div style="padding:32px 40px;">
       <h1 style="margin:0 0 20px 0;font-family:'Montserrat','Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;line-height:1.2;color:#1A1A1A;">${title}<span style="color:#FBD34D;">.</span></h1>
