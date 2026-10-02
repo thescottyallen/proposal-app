@@ -88,7 +88,9 @@ export function ProposalHistoryPanel({
                         Version {revision.version} · {formatDate(revision.createdAt)}, {formatClockTime(revision.createdAt)}
                       </p>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        {revision.savedByName} · {revision.summary}
+                        {revision.summary
+                          ? `${revision.savedByName} · ${revision.summary}`
+                          : revision.savedByName}
                       </p>
                       <div className="flex items-center gap-2 mt-2">
                         <button

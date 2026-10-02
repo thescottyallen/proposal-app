@@ -12,7 +12,7 @@ import {
   defaultPricingSettings,
 } from "@/lib/pricing-types";
 import { getAuthContext } from "@/lib/roles.server";
-import { proposalAccessWhere } from "@/lib/roles";
+import { listAccessibleProposals } from "@/lib/proposal-list";
 
 // ─── GET /api/proposals ───────────────────────────────────────────────────────
 
@@ -20,28 +20,7 @@ export async function GET() {
   const ctx = await getAuthContext();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const proposals = await prisma.proposal.findMany({
-    // Admins see every proposal; everyone else only their own.
-    where:   proposalAccessWhere(ctx.role, ctx.userId),
-    orderBy: { createdAt: "desc" },
-    select: {
-      id:            true,
-      title:         true,
-      clientName:    true,
-      clientEmail:   true,
-      status:        true,
-      totalValue:    true,
-      currency:      true,
-      invoiceNumber: true,
-      publicId:      true,
-      expiresAt:     true,
-      createdAt:     true,
-      createdBy:     true,
-      // Count only client-facing engagement events, not internal "edited" log entries.
-      _count: { select: { events: { where: { eventType: { not: "edited" } } } } },
-    },
-  });
-
+  const proposals = await listAccessibleProposals(ctx.role, ctx.userId);
   return NextResponse.json(proposals);
 }
 
@@ -102,6 +81,7 @@ export async function POST(request: NextRequest) {
   }
 
   const proposal = await prisma.proposal.create({
+    select: { id: true },
     data: {
       title:        title       || "Untitled Proposal",
       clientName:   clientName  || "",

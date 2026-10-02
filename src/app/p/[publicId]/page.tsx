@@ -3,6 +3,8 @@ import { auth, clerkClient } from "@clerk/nextjs/server";
 import { notFound } from "next/navigation";
 import { PublicProposalView } from "./PublicProposalView";
 import { sendOpenNotification } from "@/lib/email";
+import { isProposalDocument } from "@/lib/proposal-document";
+import { pricingDataForClient } from "@/lib/proposal-detail";
 
 interface Props {
   params: Promise<{ publicId: string }>;
@@ -14,6 +16,34 @@ export default async function PublicProposalPage({ params }: Props) {
 
   const proposal = await prisma.proposal.findUnique({
     where: { publicId },
+    select: {
+      id: true,
+      title: true,
+      clientName: true,
+      clientEmail: true,
+      clientAbn: true,
+      content: true,
+      status: true,
+      expiresAt: true,
+      invoiceNumber: true,
+      totalValue: true,
+      createdBy: true,
+      currency: true,
+      exchangeRate: true,
+      gstEnabled: true,
+      roundingMode: true,
+      discountType: true,
+      discountValue: true,
+      showDiscount: true,
+      depositType: true,
+      depositValue: true,
+      billingCadence: true,
+      recurringStartMode: true,
+      recurringStartDate: true,
+      fixedTermMonths: true,
+      paymentTerms: true,
+      latePaymentClause: true,
+    },
   });
 
   // Drafts stay on this same public URL so a copied preview link (and a
@@ -79,9 +109,20 @@ export default async function PublicProposalPage({ params }: Props) {
     }
   }
 
+  // v2 documents keep pricing inside content. Only legacy rows need this column.
+  let pricingData: Record<string, unknown> | null = null;
+  if (!isProposalDocument(proposal.content)) {
+    const legacy = await prisma.proposal.findUnique({
+      where: { id: proposal.id },
+      select: { pricingData: true },
+    });
+    pricingData = pricingDataForClient(proposal.content, legacy?.pricingData ?? null);
+  }
+
   // Load business settings to show on the proposal (business name, ABN)
   const bizSettings = await prisma.businessSettings.findUnique({
     where: { userId: proposal.createdBy },
+    select: { businessName: true, abn: true },
   });
 
   return (
@@ -98,7 +139,7 @@ export default async function PublicProposalPage({ params }: Props) {
         invoiceNumber: proposal.invoiceNumber,
         totalValue:    proposal.totalValue,
         // Legacy flat fields (used to migrate old proposals on the fly)
-        pricingData:        proposal.pricingData as Record<string, unknown> | null,
+        pricingData,
         currency:           proposal.currency,
         exchangeRate:       proposal.exchangeRate,
         gstEnabled:         proposal.gstEnabled,
