@@ -68,6 +68,13 @@ export interface PaymentSide {
   total:     number; // subtotal + GST
 }
 
+export interface ProjectStageQuote {
+  label:   string;
+  percent: number;
+  /** Ex-GST share of the project fee. */
+  amount:  number;
+}
+
 export interface PaymentQuote {
   monthlyAmount:     number;
   minimumMonths:     number;
@@ -77,6 +84,11 @@ export interface PaymentQuote {
   saving:            number;
   monthly:           PaymentSide;
   upfront:           PaymentSide;
+  projectFee:        number;
+  /** True when the two stage percentages add up to 100. */
+  projectPercentsValid: boolean;
+  projectStages:     ProjectStageQuote[];
+  project:           PaymentSide;
 }
 
 export interface PaymentChoiceSnapshot {
@@ -96,6 +108,9 @@ export interface PaymentChoiceSnapshot {
   subtotal:           number;
   gstAmount:          number;
   total:              number;
+  /** Set when the client chose the project fee. Null for monthly and upfront. */
+  projectFee:         number | null;
+  projectStages:      ProjectStageQuote[] | null;
 }
 
 /** Blank or whitespace-only copy is treated as no "what's included" line. */
@@ -103,6 +118,33 @@ export function paymentIncludedText(value: string | null | undefined): string | 
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+export const PROJECT_STAGE_1_LABEL = "On commencement";
+export const PROJECT_STAGE_2_LABEL = "On completion";
+
+/** Which payment choices this block actually offers. Missing flags keep the old monthly + upfront pair. */
+export function offeredPaymentChoices(settings: ProposalPricingSettings): PaymentChoice[] {
+  if (settings.paymentOptionsEnabled !== true) return [];
+  const offered: PaymentChoice[] = [];
+  if (settings.paymentMonthlyOffered !== false) offered.push("monthly");
+  if (settings.paymentUpfrontOffered !== false) offered.push("upfront");
+  if (settings.paymentProjectOffered === true) offered.push("project");
+  return offered;
+}
+
+export function projectStageLabel(value: string | null | undefined, fallback: string): string {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed.length > 0 ? trimmed : fallback;
+}
+
+/** The choice that counts: an explicit pick, or the only option on offer. */
+export function effectivePaymentChoice(settings: ProposalPricingSettings): PaymentChoice | null {
+  const offered = offeredPaymentChoices(settings);
+  const selected = settings.selectedPaymentOption;
+  if (selected && offered.includes(selected)) return selected;
+  if (offered.length === 1) return offered[0];
+  return null;
 }
 
 /** Activity-log line for one accepted payment choice. */
@@ -157,6 +199,17 @@ export function computePaymentQuote(settings: ProposalPricingSettings): PaymentQ
     ? applyRounding(Math.max(0, override), mode)
     : calculatedUpfront;
   const saving = applyRounding(monthsTotal - upfrontPrice, mode);
+  const projectFee = applyRounding(Math.max(0, settings.paymentProjectFee ?? 0), mode);
+  const stage1Percent = settings.paymentProjectStage1Percent ?? 50;
+  const stage2Percent = settings.paymentProjectStage2Percent ?? 50;
+  const projectPercentsValid =
+    Number.isFinite(stage1Percent) &&
+    Number.isFinite(stage2Percent) &&
+    stage1Percent >= 0 &&
+    stage2Percent >= 0 &&
+    Math.abs(stage1Percent + stage2Percent - 100) < 0.001;
+  const stage1Amount = applyRounding(projectFee * (stage1Percent / 100), mode);
+  const stage2Amount = applyRounding(projectFee - stage1Amount, mode);
 
   return {
     monthlyAmount,
@@ -167,6 +220,21 @@ export function computePaymentQuote(settings: ProposalPricingSettings): PaymentQ
     saving,
     monthly: paymentSide(monthlyAmount, settings.gstEnabled, mode),
     upfront: paymentSide(upfrontPrice, settings.gstEnabled, mode),
+    projectFee,
+    projectPercentsValid,
+    projectStages: [
+      {
+        label: projectStageLabel(settings.paymentProjectStage1Label, PROJECT_STAGE_1_LABEL),
+        percent: stage1Percent,
+        amount: stage1Amount,
+      },
+      {
+        label: projectStageLabel(settings.paymentProjectStage2Label, PROJECT_STAGE_2_LABEL),
+        percent: stage2Percent,
+        amount: stage2Amount,
+      },
+    ],
+    project: paymentSide(projectFee, settings.gstEnabled, mode),
   };
 }
 
@@ -185,19 +253,60 @@ export function upfrontOptionLabel(
   return `Upfront: ${fmt(quote.upfrontPrice)} once, saving ${fmt(quote.saving)}`;
 }
 
+/** "On commencement" becomes "on commencement" so it reads inside a sentence. */
+export function projectStagePhrase(label: string): string {
+  const trimmed = label.trim();
+  if (!trimmed) return trimmed;
+  return trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
+}
+
+/** Ex-GST stage amount, with "+ GST" when GST is on. */
+export function projectStageLine(
+  stage: ProjectStageQuote,
+  gstEnabled: boolean,
+  fmt: (amount: number) => string
+): string {
+  const phrase = projectStagePhrase(stage.label);
+  return gstEnabled
+    ? `${fmt(stage.amount)} + GST ${phrase}`
+    : `${fmt(stage.amount)} ${phrase}`;
+}
+
+export function projectOptionLabel(
+  quote: PaymentQuote,
+  gstEnabled: boolean,
+  fmt: (amount: number) => string
+): string {
+  const stages = quote.projectStages
+    .map((stage) => projectStageLine(stage, gstEnabled, fmt))
+    .join(", ");
+  return `Project fee: ${fmt(quote.projectFee)} (${stages})`;
+}
+
 /** Amounts recorded when a client accepts a monthly or upfront choice. */
 export function paymentChoiceSnapshot(
   settings: ProposalPricingSettings
 ): PaymentChoiceSnapshot | null {
   if (settings.paymentOptionsEnabled !== true) return null;
-  const option = settings.selectedPaymentOption;
-  if (option !== "monthly" && option !== "upfront") return null;
+  const option = effectivePaymentChoice(settings);
+  if (!option) return null;
   const quote = computePaymentQuote(settings);
+  if (option === "project" && !quote.projectPercentsValid) return null;
   const fmt = (amount: number) => formatCurrency(amount, settings.currency, settings.roundingMode);
-  const side = option === "monthly" ? quote.monthly : quote.upfront;
+  const side = option === "monthly" ? quote.monthly : option === "upfront" ? quote.upfront : quote.project;
+  const includedSource = option === "monthly"
+    ? settings.paymentMonthlyIncluded
+    : option === "upfront"
+      ? settings.paymentUpfrontIncluded
+      : settings.paymentProjectIncluded;
+  const label = option === "monthly"
+    ? monthlyOptionLabel(quote, fmt)
+    : option === "upfront"
+      ? upfrontOptionLabel(quote, fmt)
+      : projectOptionLabel(quote, settings.gstEnabled, fmt);
   return {
     option,
-    label: option === "monthly" ? monthlyOptionLabel(quote, fmt) : upfrontOptionLabel(quote, fmt),
+    label,
     monthlyAmount: quote.monthlyAmount,
     minimumMonths: quote.minimumMonths,
     monthsTotal: quote.monthsTotal,
@@ -207,12 +316,12 @@ export function paymentChoiceSnapshot(
     discountType: settings.paymentUpfrontDiscountType ?? null,
     discountValue: settings.paymentUpfrontDiscountValue ?? null,
     upfrontOverride: settings.paymentUpfrontOverride ?? null,
-    included: paymentIncludedText(
-      option === "monthly" ? settings.paymentMonthlyIncluded : settings.paymentUpfrontIncluded
-    ),
+    included: paymentIncludedText(includedSource),
     subtotal: side.subtotal,
     gstAmount: side.gstAmount,
     total: side.total,
+    projectFee: option === "project" ? quote.projectFee : null,
+    projectStages: option === "project" ? quote.projectStages : null,
   };
 }
 
@@ -257,13 +366,22 @@ export function computePricingTotals(
     };
   });
 
-  // PAYMENT OPTIONS: the client picks monthly or upfront. Until they do, this
-  // block adds nothing, so a draft doesn't invent a total from both choices.
-  // Line items in the block are not part of the charge.
+  // PAYMENT OPTIONS: the client picks one offered way to pay. Until they do, this
+  // block adds nothing, so a draft doesn't invent a total from every choice.
+  // A block with only one option doesn't need a pick. Line items aren't charged.
   if (settings.paymentOptionsEnabled === true) {
     const quote = computePaymentQuote(settings);
-    const choice = settings.selectedPaymentOption;
-    const side = choice === "monthly" ? quote.monthly : choice === "upfront" ? quote.upfront : null;
+    const choice = effectivePaymentChoice(settings);
+    const projectBlocked = choice === "project" && !quote.projectPercentsValid;
+    const side = projectBlocked
+      ? null
+      : choice === "monthly"
+        ? quote.monthly
+        : choice === "upfront"
+          ? quote.upfront
+          : choice === "project"
+            ? quote.project
+            : null;
     return {
       lines,
       sectionSubtotals: {},

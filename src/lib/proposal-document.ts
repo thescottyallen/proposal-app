@@ -13,7 +13,11 @@ import {
   defaultPricingSettings,
   stripInternalFields,
 } from "@/lib/pricing-types";
-import { paymentChoiceSnapshot, type PaymentChoiceSnapshot } from "@/lib/utils";
+import {
+  offeredPaymentChoices,
+  paymentChoiceSnapshot,
+  type PaymentChoiceSnapshot,
+} from "@/lib/utils";
 
 // ─── Block types ──────────────────────────────────────────────────────────────
 
@@ -562,10 +566,21 @@ export function allOptionGroupsResolved(doc: ProposalDocument): boolean {
 }
 
 function isPaymentChoice(value: unknown): value is PaymentChoice {
-  return value === "monthly" || value === "upfront";
+  return value === "monthly" || value === "upfront" || value === "project";
 }
 
-/** Drop a saved monthly/upfront choice so the client has to pick on the public page. */
+/** A submitted choice, or the only option when the client doesn't have to pick. */
+function choiceToStore(
+  settings: ProposalPricingSettings,
+  raw: unknown
+): PaymentChoice | null {
+  const offered = offeredPaymentChoices(settings);
+  if (isPaymentChoice(raw) && offered.includes(raw)) return raw;
+  if (offered.length === 1) return offered[0];
+  return null;
+}
+
+/** Drop a saved payment choice so the client has to pick on the public page. */
 export function clearPaymentSelections(doc: ProposalDocument): ProposalDocument {
   return {
     ...doc,
@@ -606,8 +621,8 @@ export function applyPaymentChoices(
         if (block.type !== "pricing" || block.pricingSettings.paymentOptionsEnabled !== true) {
           return block;
         }
-        const choice = choices[block.id];
-        if (!isPaymentChoice(choice)) return block;
+        const choice = choiceToStore(block.pricingSettings, choices[block.id]);
+        if (!choice) return block;
         return {
           ...block,
           pricingSettings: { ...block.pricingSettings, selectedPaymentOption: choice },
@@ -617,11 +632,11 @@ export function applyPaymentChoices(
   };
 }
 
-/** True when every payment-options block has a monthly or upfront choice. */
+/** True when every payment-options block has a choice that can be charged. */
 export function allPaymentChoicesResolved(doc: ProposalDocument): boolean {
   for (const block of getAllPricingBlocks(doc)) {
     if (block.pricingSettings.paymentOptionsEnabled !== true) continue;
-    if (!isPaymentChoice(block.pricingSettings.selectedPaymentOption)) return false;
+    if (!paymentChoiceSnapshot(block.pricingSettings)) return false;
   }
   return true;
 }

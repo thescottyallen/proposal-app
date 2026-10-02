@@ -28,7 +28,7 @@ import {
   showPageNavigation,
 } from "@/lib/proposal-document";
 import type { PaymentChoice, ProposalPricingSettings } from "@/lib/pricing-types";
-import { formatDate } from "@/lib/utils";
+import { effectivePaymentChoice, formatDate } from "@/lib/utils";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -525,8 +525,8 @@ export function PublicProposalView({ proposal, business }: Props) {
     for (const page of doc.pages) {
       for (const block of page.blocks) {
         if (block.type !== "pricing" || block.pricingSettings.paymentOptionsEnabled !== true) continue;
-        const choice = block.pricingSettings.selectedPaymentOption;
-        if (choice === "monthly" || choice === "upfront") map[block.id] = choice;
+        const choice = effectivePaymentChoice(block.pricingSettings);
+        if (choice) map[block.id] = choice;
       }
     }
     return map;

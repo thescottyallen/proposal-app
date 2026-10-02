@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 import { PricingTable } from "./PricingTable";
 import { PricingSettingsPanel } from "./PricingSettingsPanel";
 import { PaymentOptionsCards } from "./PaymentOptionsCards";
-import { fetchAudPerUsd } from "@/lib/utils";
+import { fetchAudPerUsd, offeredPaymentChoices } from "@/lib/utils";
 import type { PricingBlock } from "@/lib/proposal-document";
 import type {
   PaymentChoice,
@@ -77,9 +77,9 @@ export function PricingBlockEditor({
       style={{ backgroundColor: backgroundColor || "#ffffff" }}
     >
       <div className="px-6 py-5">
-        {clientView && paymentOn && (
+        {clientView && paymentOn && paymentChoicePrompt(block.pricingSettings) && (
           <p className="text-sm text-gray-500 mb-4">
-            Choose monthly or upfront before accepting.
+            {paymentChoicePrompt(block.pricingSettings)}
           </p>
         )}
         {clientView &&
@@ -127,4 +127,17 @@ export function PricingBlockEditor({
       </div>
     </div>
   );
+}
+
+function paymentChoicePrompt(settings: ProposalPricingSettings): string | null {
+  const offered = offeredPaymentChoices(settings);
+  if (offered.length < 2) return null;
+  if (
+    offered.length === 2 &&
+    offered.includes("monthly") &&
+    offered.includes("upfront")
+  ) {
+    return "Choose monthly or upfront before accepting.";
+  }
+  return "Choose how you'd like to pay before accepting.";
 }
