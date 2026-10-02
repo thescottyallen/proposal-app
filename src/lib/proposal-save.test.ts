@@ -1,0 +1,206 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import {
+  buildRevisionSnapshot,
+  conflictMessage,
+  evaluateProposalPatch,
+  nextRevisionVersion,
+  shouldOfferLocalRestore,
+  summarizeProposalContent,
+  type EditorBackup,
+  type RevisionSource,
+} from "./proposal-save.ts";
+
+const serverTime = "2026-10-02T00:41:00.000Z";
+const loadedTime = "2026-10-02T00:30:00.000Z";
+
+const previous: RevisionSource = {
+  title: "Website rebuild",
+  content: {
+    version: 2,
+    pages: [
+      { id: "overview", name: "Overview", blocks: [{ type: "richText", id: "a", content: {} }] },
+      {
+        id: "fees",
+        name: "Fees",
+        blocks: [
+          { type: "richText", id: "b", content: {} },
+          { type: "pricing", id: "c", pricingData: {}, pricingSettings: {} },
+        ],
+      },
+    ],
+  },
+  clientName: "Acme",
+  clientEmail: "ada@acme.com",
+  clientAbn: null,
+  internalNotes: "Morning draft",
+  expiresAt: null,
+  totalValue: 12000,
+  updatedAt: loadedTime,
+  status: "DRAFT",
+};
+
+describe("PATCH conflict (409)", () => {
+  it("rejects a content save when the server copy is newer", () => {
+    const decision = evaluateProposalPatch({
+      serverUpdatedAt: serverTime,
+      baseUpdatedAt: loadedTime,
+      writesContent: true,
+    });
+    assert.equal(decision.ok, false);
+    if (decision.ok) return;
+    assert.equal(decision.status, 409);
+    assert.equal(decision.body.code, "conflict");
+    assert.equal(decision.body.updatedAt, serverTime);
+    assert.match(decision.body.error, /another tab or by someone else/);
+  });
+
+  it("rejects a draft save the same way as a sent proposal", () => {
+    const decision = evaluateProposalPatch({
+      serverUpdatedAt: new Date(serverTime),
+      baseUpdatedAt: loadedTime,
+      writesContent: true,
+    });
+    assert.equal(decision.ok, false);
+    if (decision.ok) return;
+    assert.equal(decision.status, 409);
+  });
+
+  it("allows the save when the editor loaded the current server copy", () => {
+    const decision = evaluateProposalPatch({
+      serverUpdatedAt: serverTime,
+      baseUpdatedAt: serverTime,
+      writesContent: true,
+    });
+    assert.deepEqual(decision, { ok: true, writeRevision: true });
+  });
+
+  it("allows save mine anyway, and still asks for a revision first", () => {
+    const decision = evaluateProposalPatch({
+      serverUpdatedAt: serverTime,
+      baseUpdatedAt: loadedTime,
+      force: true,
+      writesContent: true,
+    });
+    assert.deepEqual(decision, { ok: true, writeRevision: true });
+  });
+
+  it("does not block a status-only update that isn't writing content", () => {
+    const decision = evaluateProposalPatch({
+      serverUpdatedAt: serverTime,
+      writesContent: false,
+    });
+    assert.deepEqual(decision, { ok: true, writeRevision: false });
+  });
+
+  it("treats an unreadable loaded time as a conflict", () => {
+    const decision = evaluateProposalPatch({
+      serverUpdatedAt: serverTime,
+      baseUpdatedAt: "not-a-date",
+      writesContent: true,
+    });
+    assert.equal(decision.ok, false);
+  });
+});
+
+describe("revision on draft save", () => {
+  it("stores a revision before a draft content write", () => {
+    const decision = evaluateProposalPatch({
+      serverUpdatedAt: loadedTime,
+      baseUpdatedAt: loadedTime,
+      writesContent: true,
+    });
+    assert.equal(decision.ok, true);
+    if (!decision.ok) return;
+    assert.equal(decision.writeRevision, true);
+
+    const snapshot = buildRevisionSnapshot({ ...previous, status: "DRAFT" });
+    assert.equal(snapshot.status, "DRAFT");
+    assert.deepEqual(snapshot.content, previous.content);
+    assert.equal(snapshot.title, "Website rebuild");
+    assert.equal(snapshot.clientEmail, "ada@acme.com");
+    assert.equal(snapshot.internalNotes, "Morning draft");
+    assert.equal(snapshot.updatedAt, loadedTime);
+    assert.equal(nextRevisionVersion(null), 1);
+    assert.equal(nextRevisionVersion(2), 3);
+  });
+
+  it("keeps writing a revision when a sent proposal is saved", () => {
+    const decision = evaluateProposalPatch({
+      serverUpdatedAt: loadedTime,
+      baseUpdatedAt: loadedTime,
+      writesContent: true,
+    });
+    assert.equal(decision.ok, true);
+    if (!decision.ok) return;
+    assert.equal(decision.writeRevision, true);
+    const snapshot = buildRevisionSnapshot({ ...previous, status: "SENT" });
+    assert.equal(snapshot.status, "SENT");
+    assert.equal(snapshot.content, previous.content);
+  });
+
+  it("does not write a revision for a status change with no content", () => {
+    const decision = evaluateProposalPatch({
+      serverUpdatedAt: loadedTime,
+      writesContent: false,
+    });
+    assert.deepEqual(decision, { ok: true, writeRevision: false });
+  });
+
+  it("summarizes a snapshot by page and block counts", () => {
+    const summary = summarizeProposalContent(previous.content);
+    assert.equal(summary.pageCount, 2);
+    assert.equal(summary.blockCount, 3);
+    assert.equal(summary.summary, "2 pages, 3 blocks");
+  });
+});
+
+describe("local backup", () => {
+  const server = {
+    updatedAt: "2026-10-02T00:20:00.000Z",
+    title: "Website rebuild",
+    clientName: "Acme",
+    clientEmail: "ada@acme.com",
+    clientAbn: "",
+    internalNotes: "",
+    expiresAt: "",
+    content: previous.content,
+  };
+
+  const backup: EditorBackup = {
+    savedAt: "2026-10-02T00:37:00.000Z",
+    title: "Website rebuild",
+    clientName: "Acme",
+    clientEmail: "ada@acme.com",
+    clientAbn: "",
+    internalNotes: "Unsaved note",
+    expiresAt: "",
+    content: previous.content,
+  };
+
+  it("offers a newer local copy that differs from the server", () => {
+    assert.equal(shouldOfferLocalRestore(backup, server), true);
+  });
+
+  it("stays quiet when the local copy matches the server", () => {
+    assert.equal(
+      shouldOfferLocalRestore({ ...backup, internalNotes: "" }, server),
+      false
+    );
+  });
+
+  it("stays quiet when the server copy is newer", () => {
+    assert.equal(
+      shouldOfferLocalRestore(backup, { ...server, updatedAt: "2026-10-02T00:45:00.000Z" }),
+      false
+    );
+  });
+});
+
+describe("conflict copy", () => {
+  it("includes the time of the other save", () => {
+    const message = conflictMessage(new Date(2026, 9, 2, 10, 41));
+    assert.match(message, /10:41 am/);
+    assert.match(message, /Reload to see their version, or save yours over it/);
+  });
+});
