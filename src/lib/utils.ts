@@ -91,9 +91,29 @@ export interface PaymentChoiceSnapshot {
   discountType:       DiscountType | null;
   discountValue:      number | null;
   upfrontOverride:    number | null;
+  /** What's included for the chosen option. Null when that field is blank. */
+  included:           string | null;
   subtotal:           number;
   gstAmount:          number;
   total:              number;
+}
+
+/** Blank or whitespace-only copy is treated as no "what's included" line. */
+export function paymentIncludedText(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Activity-log line for one accepted payment choice. */
+export function describeAcceptedPaymentChoice(choice: {
+  label?: string | null;
+  included?: string | null;
+}): string | null {
+  const label = choice.label?.trim();
+  if (!label) return null;
+  const included = paymentIncludedText(choice.included);
+  return included ? `${label} — ${included}` : label;
 }
 
 /** Line amounts shown in the editor and on the public page are ex GST. */
@@ -187,6 +207,9 @@ export function paymentChoiceSnapshot(
     discountType: settings.paymentUpfrontDiscountType ?? null,
     discountValue: settings.paymentUpfrontDiscountValue ?? null,
     upfrontOverride: settings.paymentUpfrontOverride ?? null,
+    included: paymentIncludedText(
+      option === "monthly" ? settings.paymentMonthlyIncluded : settings.paymentUpfrontIncluded
+    ),
     subtotal: side.subtotal,
     gstAmount: side.gstAmount,
     total: side.total,

@@ -5,6 +5,7 @@ import {
   computePaymentQuote,
   formatCurrency,
   monthlyOptionLabel,
+  paymentIncludedText,
   upfrontOptionLabel,
 } from "@/lib/utils";
 
@@ -21,10 +22,18 @@ export function PaymentOptionsCards({
 }: PaymentOptionsCardsProps) {
   const quote = computePaymentQuote(settings);
   const fmt = (amount: number) => formatCurrency(amount, settings.currency, settings.roundingMode);
-  const cards: { id: PaymentChoice; title: string; subtotal: number; gstAmount: number; total: number }[] = [
+  const cards: {
+    id: PaymentChoice;
+    title: string;
+    included: string | null;
+    subtotal: number;
+    gstAmount: number;
+    total: number;
+  }[] = [
     {
       id: "monthly",
       title: monthlyOptionLabel(quote, fmt),
+      included: paymentIncludedText(settings.paymentMonthlyIncluded),
       subtotal: quote.monthly.subtotal,
       gstAmount: quote.monthly.gstAmount,
       total: quote.monthly.total,
@@ -32,6 +41,7 @@ export function PaymentOptionsCards({
     {
       id: "upfront",
       title: upfrontOptionLabel(quote, fmt),
+      included: paymentIncludedText(settings.paymentUpfrontIncluded),
       subtotal: quote.upfront.subtotal,
       gstAmount: quote.upfront.gstAmount,
       total: quote.upfront.total,
@@ -59,6 +69,9 @@ export function PaymentOptionsCards({
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-medium text-gray-900 leading-snug">{card.title}</span>
+              {card.included && (
+                <span className="mt-1 block text-sm font-normal text-gray-600 leading-snug">{card.included}</span>
+              )}
               <span className="mt-3 block space-y-1">
                 <AmountRow label="Subtotal" value={fmt(card.subtotal)} />
                 {settings.gstEnabled && (

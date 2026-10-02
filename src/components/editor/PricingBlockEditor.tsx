@@ -69,19 +69,21 @@ export function PricingBlockEditor({
     }
   }, [block.pricingData, block.pricingSettings, onChange]);
 
+  const paymentOn = block.pricingSettings.paymentOptionsEnabled === true;
+
   return (
     <div
       className="rounded-lg border border-gray-200 shadow-sm"
       style={{ backgroundColor: backgroundColor || "#ffffff" }}
     >
       <div className="px-6 py-5">
-        {clientView && block.pricingSettings.paymentOptionsEnabled && (
+        {clientView && paymentOn && (
           <p className="text-sm text-gray-500 mb-4">
             Choose monthly or upfront before accepting.
           </p>
         )}
         {clientView &&
-          !block.pricingSettings.paymentOptionsEnabled &&
+          !paymentOn &&
           (block.pricingSettings.optionsMode ||
             block.pricingData.items.some((i) => i.isOptional)) && (
             <p className="text-xs text-gray-400 mb-4">
@@ -99,13 +101,14 @@ export function PricingBlockEditor({
             fetchingRate={fetchingRate}
           />
         )}
-        {clientView && block.pricingSettings.paymentOptionsEnabled ? (
+        {paymentOn && (clientView || readOnly) && (
           <PaymentOptionsCards
             settings={block.pricingSettings}
             selected={block.pricingSettings.selectedPaymentOption ?? null}
-            onSelect={onSelectPaymentOption}
+            onSelect={clientView ? onSelectPaymentOption : undefined}
           />
-        ) : (
+        )}
+        {!paymentOn && (
           <PricingTable
             pricingData={block.pricingData}
             pricingSettings={block.pricingSettings}

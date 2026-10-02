@@ -106,7 +106,7 @@ export function PricingSettingsPanel({
               />
               <div>
                 <p className="text-sm text-gray-700">Payment options</p>
-                <p className="text-xs text-gray-400">Offer this engagement as a monthly payment with a minimum term, or one upfront payment with a discount.</p>
+                <p className="text-xs text-gray-400">Offer this engagement as a monthly payment with a minimum term, or one upfront payment with a discount. Line items stay saved. Turn this off and they come back.</p>
               </div>
             </label>
             {settings.paymentOptionsEnabled && (
@@ -473,7 +473,49 @@ function PaymentOptionsFields({
         <p className="text-xs text-gray-400 mt-1">Leave this blank to use the calculated price, or type a round number.</p>
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <IncludedField
+          label="What's included (monthly)"
+          testId="payment-monthly-included"
+          value={settings.paymentMonthlyIncluded ?? ""}
+          onChange={value => update({ paymentMonthlyIncluded: value || null })}
+        />
+        <IncludedField
+          label="What's included (upfront)"
+          testId="payment-upfront-included"
+          value={settings.paymentUpfrontIncluded ?? ""}
+          onChange={value => update({ paymentUpfrontIncluded: value || null })}
+        />
+      </div>
+
       <PaymentOptionsCards settings={settings} />
+    </div>
+  );
+}
+
+function IncludedField({
+  label,
+  testId,
+  value,
+  onChange,
+}: {
+  label: string;
+  testId: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      <textarea
+        data-testid={testId}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="Weekly sessions, dashboard access, between-session support"
+        rows={2}
+        className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+      />
+      <p className="text-xs text-gray-400 mt-1">Optional. Leave it blank and nothing appears under this choice.</p>
     </div>
   );
 }
