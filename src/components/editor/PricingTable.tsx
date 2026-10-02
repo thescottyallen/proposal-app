@@ -11,7 +11,7 @@ import {
   DiscountType,
   defaultPricingItem,
 } from "@/lib/pricing-types";
-import { computePricingTotals, formatCurrency, applyRounding, paymentTermsLabel } from "@/lib/utils";
+import { computePricingTotals, formatCurrency, applyRounding, paymentTermsLabel, displayedLineAmount } from "@/lib/utils";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -139,7 +139,12 @@ export function PricingTable({
           {showGstCol  && <div className="px-2 py-3 text-center">GST</div>}
           {showMargin  && <div className="px-2 py-3 text-right">Margin %</div>}
           {clientView  && <div className="px-2 py-3 text-center">Include</div>}
-          <div className="px-3 py-3 text-right">Total</div>
+          <div className="px-3 py-3 text-right">
+            Total
+            {showGstCol && (
+              <div className="normal-case tracking-normal font-normal text-[10px] text-gray-400">ex GST</div>
+            )}
+          </div>
           {!readOnly && !clientView && <div className="px-2 py-3 w-8" />}
         </div>
 
@@ -277,7 +282,9 @@ function ItemRow({
   onSelectOption, optionsMode = false, indented = false,
 }: ItemRowProps) {
   const lineTotal = totals.lines.find(l => l.itemId === item.id);
-  const total     = lineTotal?.total ?? applyRounding(item.quantity * item.unitPrice, "CENTS");
+  const total     = lineTotal
+    ? displayedLineAmount(lineTotal)
+    : applyRounding(item.quantity * item.unitPrice, "CENTS");
   const cfg       = lineTypeConfig(item.type);
   const dimmed    = clientView && item.isOptional && !item.clientIncluded;
 
@@ -575,12 +582,28 @@ function TotalsFooter({
   const hasDeposit          = depositType && depositValue != null && depositValue > 0;
   const hasSections         = sections.length > 0;
 
+  // Payment options replace the line-item total. The two choices are shown
+  // separately, so this footer doesn't add the lines together.
+  if (pricingSettings.paymentOptionsEnabled) {
+    return (
+      <div className="bg-gray-50 border-t-2 border-gray-200 py-3 px-4">
+        <p className="text-sm text-gray-500">
+          The client chooses monthly or upfront. These lines stay in the editor and aren&apos;t shown on the public page.
+        </p>
+      </div>
+    );
+  }
+
   // Options block: never show a summed or default total. Once the client picks an
-  // option, show just that option's total; otherwise show a short note.
+  // option, show that option's ex-GST subtotal, GST, and total.
   if (pricingSettings.optionsMode) {
     if (clientView && !totals.hasUnresolvedOptions) {
       return (
         <div className="bg-gray-50 border-t-2 border-gray-200 py-3">
+          <TotalRow label="Subtotal" value={fmt(totals.subtotalAfterDiscount)} />
+          {showGstCol && (
+            <TotalRow label="GST (10%)" value={fmt(totals.gstAmount)} small />
+          )}
           <TotalRow
             label={billingCadence !== "ONE_OFF" ? `Total (${billingCadence === "MONTHLY" ? "monthly" : "quarterly"})` : "Total"}
             value={fmt(totals.grandTotal)}

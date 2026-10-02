@@ -3,9 +3,11 @@
 import { useCallback, useState } from "react";
 import { PricingTable } from "./PricingTable";
 import { PricingSettingsPanel } from "./PricingSettingsPanel";
+import { PaymentOptionsCards } from "./PaymentOptionsCards";
 import { fetchAudPerUsd } from "@/lib/utils";
 import type { PricingBlock } from "@/lib/proposal-document";
 import type {
+  PaymentChoice,
   ProposalPricingData,
   ProposalPricingSettings,
 } from "@/lib/pricing-types";
@@ -21,6 +23,7 @@ interface PricingBlockEditorProps {
   gstRegistered?: boolean;
   onClientIncludedChange?: (itemId: string, included: boolean) => void;
   onSelectOption?: (itemId: string) => void;
+  onSelectPaymentOption?: (choice: PaymentChoice) => void;
   backgroundColor?: string;
 }
 
@@ -32,6 +35,7 @@ export function PricingBlockEditor({
   gstRegistered = false,
   onClientIncludedChange,
   onSelectOption,
+  onSelectPaymentOption,
   backgroundColor,
 }: PricingBlockEditorProps) {
   const [fetchingRate, setFetchingRate] = useState(false);
@@ -71,7 +75,13 @@ export function PricingBlockEditor({
       style={{ backgroundColor: backgroundColor || "#ffffff" }}
     >
       <div className="px-6 py-5">
+        {clientView && block.pricingSettings.paymentOptionsEnabled && (
+          <p className="text-sm text-gray-500 mb-4">
+            Choose monthly or upfront before accepting.
+          </p>
+        )}
         {clientView &&
+          !block.pricingSettings.paymentOptionsEnabled &&
           (block.pricingSettings.optionsMode ||
             block.pricingData.items.some((i) => i.isOptional)) && (
             <p className="text-xs text-gray-400 mb-4">
@@ -89,15 +99,23 @@ export function PricingBlockEditor({
             fetchingRate={fetchingRate}
           />
         )}
-        <PricingTable
-          pricingData={block.pricingData}
-          pricingSettings={block.pricingSettings}
-          onChange={handleDataChange}
-          onClientIncludedChange={onClientIncludedChange}
-          onSelectOption={onSelectOption}
-          readOnly={readOnly}
-          clientView={clientView}
-        />
+        {clientView && block.pricingSettings.paymentOptionsEnabled ? (
+          <PaymentOptionsCards
+            settings={block.pricingSettings}
+            selected={block.pricingSettings.selectedPaymentOption ?? null}
+            onSelect={onSelectPaymentOption}
+          />
+        ) : (
+          <PricingTable
+            pricingData={block.pricingData}
+            pricingSettings={block.pricingSettings}
+            onChange={handleDataChange}
+            onClientIncludedChange={onClientIncludedChange}
+            onSelectOption={onSelectOption}
+            readOnly={readOnly}
+            clientView={clientView}
+          />
+        )}
         {clientView && block.pricingSettings.latePaymentClause && (
           <p className="text-xs text-gray-400 mt-4 pt-4 border-t border-gray-100">
             {block.pricingSettings.latePaymentClause}

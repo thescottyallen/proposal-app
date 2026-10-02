@@ -18,13 +18,16 @@ import {
   stripDocumentInternalFields,
   applyClientChoices,
   clearOptionSelections,
+  clearPaymentSelections,
   selectOption,
+  selectPaymentOption,
   allOptionGroupsResolved,
+  allPaymentChoicesResolved,
   pageHash,
   pageIdFromHash,
   showPageNavigation,
 } from "@/lib/proposal-document";
-import type { ProposalPricingSettings } from "@/lib/pricing-types";
+import type { PaymentChoice, ProposalPricingSettings } from "@/lib/pricing-types";
 import { formatDate } from "@/lib/utils";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -448,8 +451,11 @@ export function PublicProposalView({ proposal, business }: Props) {
         )
       );
   // Start every choose-one option group unselected so the client actively picks
-  // one and no combined total shows until they do.
-  const initialDoc: ProposalDocument = clearOptionSelections(resolvedDoc);
+  // one and no combined total shows until they do. Payment choices are cleared
+  // the same way, except after acceptance, where the stored choice stays visible.
+  const initialDoc: ProposalDocument = proposal.status === "ACCEPTED"
+    ? clearOptionSelections(resolvedDoc)
+    : clearPaymentSelections(clearOptionSelections(resolvedDoc));
 
   const [doc, setDoc] = useState<ProposalDocument>(initialDoc);
   const [activePageId, setActivePageId] = useState<string>(
@@ -491,6 +497,13 @@ export function PublicProposalView({ proposal, business }: Props) {
     []
   );
 
+  const handleSelectPayment = useCallback(
+    (blockId: string, choice: PaymentChoice) => {
+      setDoc((prev) => selectPaymentOption(prev, blockId, choice));
+    },
+    []
+  );
+
   // Build flat clientIncluded map across all pricing blocks for submission
   const buildClientIncluded = (): Record<string, boolean> => {
     const map: Record<string, boolean> = {};
@@ -502,6 +515,18 @@ export function PublicProposalView({ proposal, business }: Props) {
             if (optionsMode || item.isOptional) map[item.id] = item.clientIncluded;
           }
         }
+      }
+    }
+    return map;
+  };
+
+  const buildPaymentChoices = (): Record<string, PaymentChoice> => {
+    const map: Record<string, PaymentChoice> = {};
+    for (const page of doc.pages) {
+      for (const block of page.blocks) {
+        if (block.type !== "pricing" || block.pricingSettings.paymentOptionsEnabled !== true) continue;
+        const choice = block.pricingSettings.selectedPaymentOption;
+        if (choice === "monthly" || choice === "upfront") map[block.id] = choice;
       }
     }
     return map;
@@ -564,7 +589,7 @@ export function PublicProposalView({ proposal, business }: Props) {
     signerName: string,
     clientAbn: string
   ) => {
-    if (!allOptionGroupsResolved(doc)) {
+    if (!allOptionGroupsResolved(doc) || !allPaymentChoicesResolved(doc)) {
       throw new Error("Please choose an option where a choice is offered before accepting.");
     }
     const res = await fetch(`/api/proposals/${proposal.id}/accept`, {
@@ -574,6 +599,7 @@ export function PublicProposalView({ proposal, business }: Props) {
         signerName,
         clientAbn: clientAbn || null,
         clientIncluded: buildClientIncluded(),
+        paymentChoices: buildPaymentChoices(),
       }),
     });
     const data = await res.json();
@@ -618,6 +644,11 @@ export function PublicProposalView({ proposal, business }: Props) {
             isAcceptable
               ? (itemId) => handleSelectOption(block.id, itemId)
               : undefined
+          }
+          onSelectPaymentOption={
+            proposal.status === "ACCEPTED"
+              ? undefined
+              : (choice) => handleSelectPayment(block.id, choice)
           }
           backgroundColor={block.backgroundColor}
         />

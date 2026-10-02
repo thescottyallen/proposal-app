@@ -7,6 +7,7 @@ import type {
   PricingTotals,
   LineTotal,
   DiscountType,
+  PaymentChoice,
 } from "./pricing-types";
 
 // ─── IDs & dates ──────────────────────────────────────────────────────────────
@@ -61,6 +62,137 @@ export async function fetchAudPerUsd(): Promise<number> {
 
 const GST_RATE = 0.10;
 
+export interface PaymentSide {
+  subtotal:  number; // ex GST
+  gstAmount: number;
+  total:     number; // subtotal + GST
+}
+
+export interface PaymentQuote {
+  monthlyAmount:     number;
+  minimumMonths:     number;
+  monthsTotal:       number;
+  calculatedUpfront: number;
+  upfrontPrice:      number;
+  saving:            number;
+  monthly:           PaymentSide;
+  upfront:           PaymentSide;
+}
+
+export interface PaymentChoiceSnapshot {
+  option:             PaymentChoice;
+  label:              string;
+  monthlyAmount:      number;
+  minimumMonths:      number;
+  monthsTotal:        number;
+  calculatedUpfront:  number;
+  upfrontPrice:       number;
+  saving:             number;
+  discountType:       DiscountType | null;
+  discountValue:      number | null;
+  upfrontOverride:    number | null;
+  subtotal:           number;
+  gstAmount:          number;
+  total:              number;
+}
+
+/** Line amounts shown in the editor and on the public page are ex GST. */
+export function displayedLineAmount(line: Pick<LineTotal, "afterDiscount">): number {
+  return line.afterDiscount;
+}
+
+function paymentSide(amount: number, gstEnabled: boolean, mode: RoundingMode): PaymentSide {
+  const subtotal  = applyRounding(Math.max(0, amount), mode);
+  const gstAmount = gstEnabled ? applyRounding(subtotal * GST_RATE, mode) : 0;
+  return {
+    subtotal,
+    gstAmount,
+    total: applyRounding(subtotal + gstAmount, mode),
+  };
+}
+
+/**
+ * Monthly amount × minimum months, then the upfront discount.
+ * An override replaces the calculated upfront price. The saving is the
+ * difference against paying monthly for the minimum term, ex GST.
+ */
+export function computePaymentQuote(settings: ProposalPricingSettings): PaymentQuote {
+  const mode = settings.roundingMode ?? "CENTS";
+  const monthlyAmount = applyRounding(Math.max(0, settings.paymentMonthlyAmount ?? 0), mode);
+  const minimumMonths = Math.max(1, Math.floor(settings.paymentMinimumMonths ?? 1) || 1);
+  const monthsTotal = applyRounding(monthlyAmount * minimumMonths, mode);
+
+  const discountType = settings.paymentUpfrontDiscountType ?? null;
+  const discountValue = settings.paymentUpfrontDiscountValue ?? null;
+  let discount = 0;
+  if (discountType && discountValue != null && discountValue > 0) {
+    discount = discountType === "percentage"
+      ? applyRounding(monthsTotal * (discountValue / 100), mode)
+      : applyRounding(discountValue, mode);
+  }
+  discount = Math.min(discount, monthsTotal);
+  const calculatedUpfront = applyRounding(Math.max(0, monthsTotal - discount), mode);
+  const override = settings.paymentUpfrontOverride;
+  const upfrontPrice = override != null && Number.isFinite(override)
+    ? applyRounding(Math.max(0, override), mode)
+    : calculatedUpfront;
+  const saving = applyRounding(monthsTotal - upfrontPrice, mode);
+
+  return {
+    monthlyAmount,
+    minimumMonths,
+    monthsTotal,
+    calculatedUpfront,
+    upfrontPrice,
+    saving,
+    monthly: paymentSide(monthlyAmount, settings.gstEnabled, mode),
+    upfront: paymentSide(upfrontPrice, settings.gstEnabled, mode),
+  };
+}
+
+export function monthlyOptionLabel(
+  quote: PaymentQuote,
+  fmt: (amount: number) => string
+): string {
+  const unit = quote.minimumMonths === 1 ? "month" : "months";
+  return `Monthly: ${fmt(quote.monthlyAmount)} a month for at least ${quote.minimumMonths} ${unit}`;
+}
+
+export function upfrontOptionLabel(
+  quote: PaymentQuote,
+  fmt: (amount: number) => string
+): string {
+  return `Upfront: ${fmt(quote.upfrontPrice)} once, saving ${fmt(quote.saving)}`;
+}
+
+/** Amounts recorded when a client accepts a monthly or upfront choice. */
+export function paymentChoiceSnapshot(
+  settings: ProposalPricingSettings
+): PaymentChoiceSnapshot | null {
+  if (settings.paymentOptionsEnabled !== true) return null;
+  const option = settings.selectedPaymentOption;
+  if (option !== "monthly" && option !== "upfront") return null;
+  const quote = computePaymentQuote(settings);
+  const fmt = (amount: number) => formatCurrency(amount, settings.currency, settings.roundingMode);
+  const side = option === "monthly" ? quote.monthly : quote.upfront;
+  return {
+    option,
+    label: option === "monthly" ? monthlyOptionLabel(quote, fmt) : upfrontOptionLabel(quote, fmt),
+    monthlyAmount: quote.monthlyAmount,
+    minimumMonths: quote.minimumMonths,
+    monthsTotal: quote.monthsTotal,
+    calculatedUpfront: quote.calculatedUpfront,
+    upfrontPrice: quote.upfrontPrice,
+    saving: quote.saving,
+    discountType: settings.paymentUpfrontDiscountType ?? null,
+    discountValue: settings.paymentUpfrontDiscountValue ?? null,
+    upfrontOverride: settings.paymentUpfrontOverride ?? null,
+    subtotal: side.subtotal,
+    gstAmount: side.gstAmount,
+    total: side.total,
+  };
+}
+
 function calcLineDiscount(
   subtotal:      number,
   discountType:  DiscountType | null,
@@ -101,6 +233,26 @@ export function computePricingTotals(
       total: applyRounding(afterDiscount + gstAmount, mode),
     };
   });
+
+  // PAYMENT OPTIONS: the client picks monthly or upfront. Until they do, this
+  // block adds nothing, so a draft doesn't invent a total from both choices.
+  // Line items in the block are not part of the charge.
+  if (settings.paymentOptionsEnabled === true) {
+    const quote = computePaymentQuote(settings);
+    const choice = settings.selectedPaymentOption;
+    const side = choice === "monthly" ? quote.monthly : choice === "upfront" ? quote.upfront : null;
+    return {
+      lines,
+      sectionSubtotals: {},
+      subtotalBeforeDiscount: side?.subtotal ?? 0,
+      proposalDiscountAmount: 0,
+      subtotalAfterDiscount:  side?.subtotal ?? 0,
+      gstAmount:  side?.gstAmount ?? 0,
+      depositAmount: 0,
+      grandTotal: side?.total ?? 0,
+      hasUnresolvedOptions: !side,
+    };
+  }
 
   // OPTIONS MODE: the block's lines are mutually-exclusive alternatives. Only the
   // line the client has selected counts, and no combined total is shown until they

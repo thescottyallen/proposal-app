@@ -12,6 +12,8 @@ import {
   DiscountType,
   DepositType,
 } from "@/lib/pricing-types";
+import { computePaymentQuote, formatCurrency } from "@/lib/utils";
+import { PaymentOptionsCards } from "./PaymentOptionsCards";
 
 interface PricingSettingsPanelProps {
   settings:          ProposalPricingSettings;
@@ -41,6 +43,7 @@ export function PricingSettingsPanel({
       {/* Toggle header */}
       <button
         type="button"
+        data-testid="pricing-settings-toggle"
         onClick={() => setOpen(v => !v)}
         className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
       >
@@ -49,6 +52,7 @@ export function PricingSettingsPanel({
           <span>
             {settings.currency}
             {settings.optionsMode ? " · Options" : ""}
+            {settings.paymentOptionsEnabled ? " · Payment options" : ""}
             {settings.gstEnabled ? " · GST" : ""}
             {settings.billingCadence !== "ONE_OFF" ? ` · ${settings.billingCadence === "MONTHLY" ? "Monthly" : "Quarterly"}` : ""}
             {settings.discountType ? " · Discount" : ""}
@@ -66,7 +70,10 @@ export function PricingSettingsPanel({
               <input
                 type="checkbox"
                 checked={settings.optionsMode}
-                onChange={e => update({ optionsMode: e.target.checked })}
+                onChange={e => update({
+                  optionsMode: e.target.checked,
+                  ...(e.target.checked ? { paymentOptionsEnabled: false } : {}),
+                })}
                 className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <div>
@@ -74,6 +81,37 @@ export function PricingSettingsPanel({
                 <p className="text-xs text-gray-400">Shows each line as a choose-one option with a radio button. No total is shown until the client picks one.</p>
               </div>
             </label>
+          </div>
+
+          <div id="payment-options-setting">
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                data-testid="payment-options-toggle"
+                checked={settings.paymentOptionsEnabled === true}
+                onChange={e => {
+                  const on = e.target.checked;
+                  update({
+                    paymentOptionsEnabled: on,
+                    ...(on ? {
+                      optionsMode: false,
+                      paymentMonthlyAmount: settings.paymentMonthlyAmount ?? 0,
+                      paymentMinimumMonths: settings.paymentMinimumMonths ?? 3,
+                      paymentUpfrontDiscountType: settings.paymentUpfrontDiscountType ?? "percentage",
+                      paymentUpfrontDiscountValue: settings.paymentUpfrontDiscountValue ?? 0,
+                    } : {}),
+                  });
+                }}
+                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <div>
+                <p className="text-sm text-gray-700">Payment options</p>
+                <p className="text-xs text-gray-400">Offer this engagement as a monthly payment with a minimum term, or one upfront payment with a discount.</p>
+              </div>
+            </label>
+            {settings.paymentOptionsEnabled && (
+              <PaymentOptionsFields settings={settings} update={update} />
+            )}
           </div>
 
           <hr className="border-gray-100" />
@@ -139,7 +177,7 @@ export function PricingSettingsPanel({
                 />
                 <div>
                   <p className="text-sm text-gray-700">Charge GST (10%)</p>
-                  <p className="text-xs text-gray-400">Adds a GST column per line and a GST subtotal row</p>
+                  <p className="text-xs text-gray-400">Line totals stay ex GST. GST is added once in the summary.</p>
                 </div>
               </label>
             </div>
@@ -325,6 +363,117 @@ export function PricingSettingsPanel({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function PaymentOptionsFields({
+  settings,
+  update,
+}: {
+  settings: ProposalPricingSettings;
+  update: (patch: Partial<ProposalPricingSettings>) => void;
+}) {
+  const quote = computePaymentQuote(settings);
+  const fmt = (amount: number) => formatCurrency(amount, settings.currency, settings.roundingMode);
+  const discountLabel = settings.paymentUpfrontDiscountType === "fixed"
+    ? `less ${fmt(settings.paymentUpfrontDiscountValue ?? 0)}`
+    : settings.paymentUpfrontDiscountType === "percentage" && (settings.paymentUpfrontDiscountValue ?? 0) > 0
+      ? `less ${settings.paymentUpfrontDiscountValue}%`
+      : null;
+
+  return (
+    <div className="mt-4 ml-6 space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Monthly amount</label>
+          <input
+            type="number"
+            data-testid="payment-monthly-amount"
+            value={settings.paymentMonthlyAmount ?? 0}
+            onChange={e => update({ paymentMonthlyAmount: parseFloat(e.target.value) || 0 })}
+            min={0}
+            step={50}
+            className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Minimum months</label>
+          <input
+            type="number"
+            data-testid="payment-minimum-months"
+            value={settings.paymentMinimumMonths ?? 3}
+            onChange={e => update({ paymentMinimumMonths: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+            min={1}
+            step={1}
+            className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-2">Upfront discount</label>
+        <div className="flex items-center gap-2">
+          <select
+            data-testid="payment-discount-type"
+            value={settings.paymentUpfrontDiscountType ?? "none"}
+            onChange={e => {
+              const val = e.target.value;
+              update({
+                paymentUpfrontDiscountType: val === "none" ? null : val as DiscountType,
+                paymentUpfrontDiscountValue: val === "none" ? null : (settings.paymentUpfrontDiscountValue ?? 0),
+              });
+            }}
+            className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="none">None</option>
+            <option value="percentage">Percentage (%)</option>
+            <option value="fixed">Fixed amount</option>
+          </select>
+          {settings.paymentUpfrontDiscountType && (
+            <>
+              <input
+                type="number"
+                data-testid="payment-discount-value"
+                value={settings.paymentUpfrontDiscountValue ?? 0}
+                onChange={e => update({ paymentUpfrontDiscountValue: parseFloat(e.target.value) || 0 })}
+                min={0}
+                step={settings.paymentUpfrontDiscountType === "percentage" ? 1 : 50}
+                className="w-24 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-400">
+                {settings.paymentUpfrontDiscountType === "percentage" ? "%" : ""}
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+
+      <p className="text-xs text-gray-500" data-testid="payment-calculated-upfront">
+        {discountLabel
+          ? `${fmt(quote.monthlyAmount)} × ${quote.minimumMonths} = ${fmt(quote.monthsTotal)}, ${discountLabel} = ${fmt(quote.calculatedUpfront)}.`
+          : `${fmt(quote.monthlyAmount)} × ${quote.minimumMonths} = ${fmt(quote.calculatedUpfront)}.`}
+      </p>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1">Upfront price</label>
+        <input
+          type="number"
+          data-testid="payment-upfront-override"
+          value={settings.paymentUpfrontOverride ?? ""}
+          onChange={e => {
+            const raw = e.target.value;
+            update({ paymentUpfrontOverride: raw === "" ? null : (parseFloat(raw) || 0) });
+          }}
+          min={0}
+          step={1}
+          placeholder="Use the calculated price"
+          className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <p className="text-xs text-gray-400 mt-1">Leave this blank to use the calculated price, or type a round number.</p>
+      </div>
+
+      <PaymentOptionsCards settings={settings} />
     </div>
   );
 }
