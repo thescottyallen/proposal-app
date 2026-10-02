@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getAuthContext } from "@/lib/roles.server";
 import { proposalAccessWhere } from "@/lib/roles";
@@ -11,6 +12,13 @@ import {
   ProposalDocument,
 } from "@/lib/proposal-document";
 import type { ProposalPricingSettings } from "@/lib/pricing-types";
+import {
+  buildRevisionSnapshot,
+  contentFromSnapshot,
+  evaluateProposalPatch,
+  nextRevisionVersion,
+  summarizeProposalContent,
+} from "@/lib/proposal-save";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -78,7 +86,7 @@ export async function GET(
     include: {
       template:  { select: { name: true } },
       events:    { orderBy: { createdAt: "desc" }, take: 50 },
-      revisions: { orderBy: { version: "desc" }, take: 10, select: { version: true, createdAt: true, createdBy: true } },
+      revisions: { orderBy: { version: "desc" }, take: 50 },
     },
   });
 
@@ -90,7 +98,8 @@ export async function GET(
     .filter((e) => e.eventType === "edited")
     .map((e) => (e.metadata as { editedBy?: string } | null)?.editedBy)
     .filter((x): x is string => Boolean(x));
-  const users = await resolveClerkUsers([proposal.createdBy, ...editorIds]);
+  const revisionAuthorIds = proposal.revisions.map((revision) => revision.createdBy);
+  const users = await resolveClerkUsers([proposal.createdBy, ...editorIds, ...revisionAuthorIds]);
   const author = users[proposal.createdBy];
 
   const events = (proposal.events as EventForLog[]).map((e) => {
@@ -101,8 +110,20 @@ export async function GET(
     };
   });
 
+  const revisions = proposal.revisions.map((revision) => {
+    const content = contentFromSnapshot(revision.snapshot);
+    return {
+      version: revision.version,
+      createdAt: revision.createdAt,
+      createdBy: revision.createdBy,
+      savedByName: users[revision.createdBy]?.name ?? "Unknown user",
+      summary: summarizeProposalContent(content).summary,
+    };
+  });
+
   return NextResponse.json({
     ...proposal,
+    revisions,
     events,
     authorName: author?.name ?? "Unknown user",
     authorEmail: author?.email ?? "",
@@ -133,6 +154,8 @@ export async function PATCH(
     // Legacy fields (still accepted for backward compat)
     pricingData: legacyPricingData,
     pricingSettings: legacyPricingSettings,
+    baseUpdatedAt,
+    force,
   } = body;
 
   // Compute totalValue and first pricing settings from the content
@@ -150,28 +173,48 @@ export async function PATCH(
     ps = legacyPricingSettings as ProposalPricingSettings;
   }
 
-  // Snapshot current state as a revision if the proposal is already SENT/VIEWED/ACCEPTED
-  const shouldSnapshot = ["SENT", "VIEWED", "ACCEPTED"].includes(existing.status);
-  if (shouldSnapshot && (content !== undefined || legacyPricingData)) {
-    const lastRevision = await prisma.proposalRevision.findFirst({
-      where:   { proposalId: id },
-      orderBy: { version: "desc" },
-    });
-    await prisma.proposalRevision.create({
-      data: {
-        proposalId: id,
-        version:    (lastRevision?.version ?? 0) + 1,
-        createdBy:  ctx.userId,
-        snapshot: {
-          title:      existing.title,
-          content:    existing.content,
-          clientName: existing.clientName,
-          clientEmail: existing.clientEmail,
-          totalValue: existing.totalValue,
-          updatedAt:  existing.updatedAt,
+  // Content writes (drafts included) keep the previous content first, then update.
+  // Sent, viewed, and accepted proposals still snapshot the same way.
+  // A stale editor gets 409 unless the user chooses to save over the newer copy.
+  const decision = evaluateProposalPatch({
+    serverUpdatedAt: existing.updatedAt,
+    baseUpdatedAt: typeof baseUpdatedAt === "string" ? baseUpdatedAt : null,
+    force: force === true,
+    writesContent: content !== undefined || Boolean(legacyPricingData),
+  });
+  if (!decision.ok) {
+    return NextResponse.json(decision.body, { status: decision.status });
+  }
+
+  if (decision.writeRevision) {
+    try {
+      const lastRevision = await prisma.proposalRevision.findFirst({
+        where:   { proposalId: id },
+        orderBy: { version: "desc" },
+      });
+      await prisma.proposalRevision.create({
+        data: {
+          proposalId: id,
+          version:    nextRevisionVersion(lastRevision?.version),
+          createdBy:  ctx.userId,
+          snapshot:   buildRevisionSnapshot(existing) as unknown as Prisma.InputJsonValue,
         },
-      },
-    });
+      });
+    } catch (err) {
+      // Another save took this version number. Treat it as a conflict so the
+      // editor can reload instead of overwriting.
+      if ((err as { code?: string }).code === "P2002") {
+        return NextResponse.json(
+          {
+            error: "This proposal was changed in another tab or by someone else.",
+            code: "conflict",
+            updatedAt: existing.updatedAt.toISOString(),
+          },
+          { status: 409 }
+        );
+      }
+      throw err;
+    }
   }
 
   const proposal = await prisma.proposal.update({

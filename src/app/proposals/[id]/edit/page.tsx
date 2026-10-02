@@ -3,7 +3,7 @@
 import { Shell } from "@/components/ui/Shell";
 import { ProposalEditor } from "@/components/editor/ProposalEditor";
 import { useRouter, useParams } from "next/navigation";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useUser } from "@clerk/nextjs";
 import { isValidEmail, optionalCopyError, previewRecipientEmail } from "@/lib/email-recipients";
 import {
@@ -11,7 +11,7 @@ import {
   BookmarkPlus, Check, Mail, X, Link2, Lock, History, XCircle, RotateCcw, Eye,
 } from "lucide-react";
 import Link from "next/link";
-import { getStatusColor, formatDate } from "@/lib/utils";
+import { getStatusColor } from "@/lib/utils";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import {
   ProposalDocument,
@@ -19,6 +19,16 @@ import {
   isProposalDocument,
 } from "@/lib/proposal-document";
 import { defaultPricingSettings } from "@/lib/pricing-types";
+import {
+  clearLocalBackup,
+  contentFromSnapshot,
+  readLocalBackup,
+  shouldOfferLocalRestore,
+  writeLocalBackup,
+  type EditorBackup,
+} from "@/lib/proposal-save";
+import { SaveConflictBanner, SaveStatusText, UnsavedChangesBanner } from "@/components/editor/SaveProtection";
+import { ProposalHistoryPanel, type HistoryPreview } from "@/components/editor/ProposalHistoryPanel";
 
 interface ProposalMeta {
   id:             string;
@@ -56,6 +66,26 @@ interface ProposalMeta {
   authorEmail?:       string;
   viewerIsAuthor?:    boolean;
   events?:            ProposalEventMeta[];
+  updatedAt?:         string;
+  revisions?:         ProposalRevisionMeta[];
+}
+
+interface ProposalRevisionMeta {
+  version:     number;
+  createdAt:   string;
+  createdBy:   string;
+  savedByName: string;
+  summary:     string;
+}
+
+interface DraftFields {
+  title:         string;
+  clientName:    string;
+  clientEmail:   string;
+  clientAbn:     string;
+  internalNotes: string;
+  expiresAt:     string;
+  document:      ProposalDocument;
 }
 
 interface ProposalEventMeta {
@@ -99,6 +129,36 @@ function describeEvent(ev: ProposalEventMeta): string {
     accepted:       "Proposal was accepted",
   };
   return labels[ev.eventType] ?? ev.eventType;
+}
+
+function draftFromProposal(data: ProposalMeta): DraftFields {
+  const rawContent = (data.content ?? {}) as Record<string, unknown>;
+  const document = isProposalDocument(rawContent)
+    ? rawContent
+    : migrateToDocument(
+        rawContent,
+        (data.pricingData ?? null) as Parameters<typeof migrateToDocument>[1],
+        legacyPricingSettings(data)
+      );
+  return {
+    title:         data.title ?? "",
+    clientName:    data.clientName ?? "",
+    clientEmail:   data.clientEmail ?? "",
+    clientAbn:     data.clientAbn ?? "",
+    internalNotes: data.internalNotes ?? "",
+    expiresAt:     data.expiresAt ? data.expiresAt.slice(0, 10) : "",
+    document,
+  };
+}
+
+function documentFromUnknown(content: unknown, proposal: ProposalMeta): ProposalDocument {
+  if (isProposalDocument(content)) return content;
+  const raw = (content && typeof content === "object" ? content : {}) as Record<string, unknown>;
+  return migrateToDocument(
+    raw,
+    (proposal.pricingData ?? null) as Parameters<typeof migrateToDocument>[1],
+    legacyPricingSettings(proposal)
+  );
 }
 
 function legacyPricingSettings(p: ProposalMeta) {
@@ -208,39 +268,100 @@ export default function EditProposalPage() {
   const [previewMessage, setPreviewMessage]       = useState("");
   const [previewSending, setPreviewSending]       = useState(false);
   const [previewError, setPreviewError]           = useState("");
+  const [baseUpdatedAt, setBaseUpdatedAt]         = useState<string | null>(null);
+  const [conflictAt, setConflictAt]               = useState<string | null>(null);
+  const [backupOffer, setBackupOffer]             = useState<EditorBackup | null>(null);
+  const [savePhase, setSavePhase]                 = useState<"idle" | "saving" | "saved" | "retrying">("idle");
+  const [savedAt, setSavedAt]                     = useState<string | null>(null);
+  const [editorEpoch, setEditorEpoch]             = useState(0);
+  const [historyPreview, setHistoryPreview]       = useState<HistoryPreview | null>(null);
+  const [historyPreviewLoading, setHistoryPreviewLoading] = useState(false);
+  const [restoring, setRestoring]                 = useState(false);
+
+  const hasChangesRef = useRef(false);
+  const conflictRef = useRef(false);
+  const baseUpdatedAtRef = useRef<string | null>(null);
+  const draftRef = useRef<DraftFields | null>(null);
+  const saveTail = useRef(Promise.resolve());
 
   const { clearChanges } = useUnsavedChanges(hasChanges);
 
-  const showToast = (message: string) => {
+  const showToast = useCallback((message: string) => {
     setToast(message);
     setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  useEffect(() => {
+    hasChangesRef.current = hasChanges;
+  }, [hasChanges]);
+
+  useEffect(() => {
+    conflictRef.current = conflictAt != null;
+  }, [conflictAt]);
+
+  useEffect(() => {
+    baseUpdatedAtRef.current = baseUpdatedAt;
+  }, [baseUpdatedAt]);
+
+  useEffect(() => {
+    if (!document) {
+      draftRef.current = null;
+      return;
+    }
+    draftRef.current = {
+      title,
+      clientName,
+      clientEmail,
+      clientAbn,
+      internalNotes,
+      expiresAt,
+      document,
+    };
+  }, [title, clientName, clientEmail, clientAbn, internalNotes, expiresAt, document]);
+
+  const applyDraft = (draft: DraftFields) => {
+    draftRef.current = draft;
+    setTitle(draft.title);
+    setClientName(draft.clientName);
+    setClientEmail(draft.clientEmail);
+    setClientAbn(draft.clientAbn);
+    setInternalNotes(draft.internalNotes);
+    setExpiresAt(draft.expiresAt);
+    setDocument(draft.document);
+    setEditorEpoch((epoch) => epoch + 1);
   };
+
+  const serverStateFromDraft = (draft: DraftFields, updatedAt: string) => ({
+    updatedAt,
+    title: draft.title,
+    clientName: draft.clientName,
+    clientEmail: draft.clientEmail,
+    clientAbn: draft.clientAbn,
+    internalNotes: draft.internalNotes,
+    expiresAt: draft.expiresAt,
+    content: draft.document,
+  });
 
   useEffect(() => {
     Promise.all([
       fetch(`/api/proposals/${id}`).then((r) => r.json()),
       fetch("/api/settings").then((r) => r.json()),
     ]).then(([data, settings]) => {
+      const draft = draftFromProposal(data);
       setProposal(data);
-      setTitle(data.title);
-      setClientName(data.clientName);
-      setClientEmail(data.clientEmail);
-      setClientAbn(data.clientAbn ?? "");
-      setInternalNotes(data.internalNotes ?? "");
-      setExpiresAt(data.expiresAt ? data.expiresAt.slice(0, 10) : "");
+      applyDraft(draft);
       setGstRegistered(settings.gstRegistered ?? false);
       setDefaultAcceptanceMessage(settings.defaultAcceptanceMessage ?? null);
-
-      // Migrate legacy content to ProposalDocument if needed
-      const rawContent = data.content as Record<string, unknown>;
-      const doc = isProposalDocument(rawContent)
-        ? rawContent
-        : migrateToDocument(
-            rawContent,
-            data.pricingData ?? null,
-            legacyPricingSettings(data)
-          );
-      setDocument(doc);
+      const loadedAt = typeof data.updatedAt === "string" ? data.updatedAt : null;
+      baseUpdatedAtRef.current = loadedAt;
+      setBaseUpdatedAt(loadedAt);
+      setSavedAt(loadedAt);
+      const backup = readLocalBackup(window.localStorage, id);
+      setBackupOffer(
+        backup && loadedAt && shouldOfferLocalRestore(backup, serverStateFromDraft(draft, loadedAt))
+          ? backup
+          : null
+      );
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [id]);
@@ -250,34 +371,147 @@ export default function EditProposalPage() {
     setHasChanges(true);
   }, []);
 
-  const buildSaveBody = () => ({
-    title,
-    clientName,
-    clientEmail,
-    clientAbn:     clientAbn    || null,
-    internalNotes: internalNotes || null,
-    expiresAt:     expiresAt    || null,
-    content:       document,
-  });
+  const showToastRef = useRef(showToast);
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
 
-  const handleSave = async () => {
-    if (!document) return;
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/proposals/${id}`, {
-        method:  "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify(buildSaveBody()),
+  type SaveResult = "saved" | "skipped" | "conflict" | "error";
+
+  const saveProposal = useCallback((opts?: {
+    force?: boolean;
+    auto?: boolean;
+    override?: DraftFields;
+  }): Promise<SaveResult> => {
+    const run = async (): Promise<SaveResult> => {
+      const draft = opts?.override ?? draftRef.current;
+      if (!draft?.document) return "error";
+      if (opts?.auto && (conflictRef.current || !hasChangesRef.current)) return "skipped";
+      if (!opts?.force && !opts?.auto && !opts?.override && !hasChangesRef.current) return "skipped";
+
+      if (opts?.override) {
+        draftRef.current = opts.override;
+      }
+
+      const payload = {
+        title:         draft.title,
+        clientName:    draft.clientName,
+        clientEmail:   draft.clientEmail,
+        clientAbn:     draft.clientAbn || null,
+        internalNotes: draft.internalNotes || null,
+        expiresAt:     draft.expiresAt || null,
+        content:       draft.document,
+        baseUpdatedAt: baseUpdatedAtRef.current,
+        force:         opts?.force === true,
+      };
+      const body = JSON.stringify(payload);
+
+      setSaving(true);
+      setSavePhase("saving");
+      try {
+        writeLocalBackup(window.localStorage, id, {
+          savedAt:       new Date().toISOString(),
+          title:         draft.title,
+          clientName:    draft.clientName,
+          clientEmail:   draft.clientEmail,
+          clientAbn:     draft.clientAbn,
+          internalNotes: draft.internalNotes,
+          expiresAt:     draft.expiresAt,
+          content:       draft.document,
+        });
+        const res = await fetch(`/api/proposals/${id}`, {
+          method:  "PATCH",
+          headers: { "Content-Type": "application/json" },
+          keepalive: opts?.auto === true && body.length < 60_000,
+          body,
+        });
+        if (res.status === 409) {
+          const data = await res.json().catch(() => ({}));
+          const at = typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString();
+          conflictRef.current = true;
+          setConflictAt(at);
+          setSavePhase("idle");
+          if (opts?.override) {
+            applyDraft(opts.override);
+            hasChangesRef.current = true;
+            setHasChanges(true);
+          }
+          return "conflict";
+        }
+        if (!res.ok) {
+          setSavePhase("retrying");
+          if (!opts?.auto) showToastRef.current("Couldn't save just now. We'll keep trying.");
+          return "error";
+        }
+        const saved = await res.json();
+        const nextUpdatedAt = typeof saved.updatedAt === "string" ? saved.updatedAt : new Date().toISOString();
+        baseUpdatedAtRef.current = nextUpdatedAt;
+        setBaseUpdatedAt(nextUpdatedAt);
+        setSavedAt(nextUpdatedAt);
+        hasChangesRef.current = false;
+        setHasChanges(false);
+        conflictRef.current = false;
+        setConflictAt(null);
+        setSavePhase("saved");
+        clearLocalBackup(window.localStorage, id);
+        setBackupOffer(null);
+        if (opts?.override) applyDraft(opts.override);
+        setProposal((prev) => (prev ? { ...prev, updatedAt: nextUpdatedAt, status: saved.status ?? prev.status } : prev));
+        if (!opts?.auto) showToastRef.current("Saved");
+        return "saved";
+      } catch {
+        setSavePhase("retrying");
+        if (!opts?.auto) showToastRef.current("Couldn't save just now. We'll keep trying.");
+        return "error";
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    const job = saveTail.current.then(run, run);
+    saveTail.current = job.then(() => undefined, () => undefined);
+    return job;
+  }, [id]);
+
+  const isAccepted = proposal?.status === "ACCEPTED";
+
+  useEffect(() => {
+    if (loading || isAccepted || !hasChanges || conflictAt) return;
+    const tick = () => { void saveProposal({ auto: true }); };
+    const interval = window.setInterval(tick, 30_000);
+    const onHide = () => { void saveProposal({ auto: true }); };
+    window.addEventListener("blur", onHide);
+    window.addEventListener("pagehide", onHide);
+    const onVis = () => {
+      if (window.document.visibilityState === "hidden") onHide();
+    };
+    window.document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("blur", onHide);
+      window.removeEventListener("pagehide", onHide);
+      window.document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [loading, isAccepted, hasChanges, conflictAt, saveProposal]);
+
+  useEffect(() => {
+    if (loading || !hasChanges || !document) return;
+    const handle = window.setTimeout(() => {
+      const draft = draftRef.current;
+      if (!draft) return;
+      writeLocalBackup(window.localStorage, id, {
+        savedAt:       new Date().toISOString(),
+        title:         draft.title,
+        clientName:    draft.clientName,
+        clientEmail:   draft.clientEmail,
+        clientAbn:     draft.clientAbn,
+        internalNotes: draft.internalNotes,
+        expiresAt:     draft.expiresAt,
+        content:       draft.document,
       });
-      if (!res.ok) { showToast("Save failed"); return; }
-      setHasChanges(false);
-      showToast("Saved");
-    } catch {
-      showToast("Save failed");
-    } finally {
-      setSaving(false);
-    }
-  };
+    }, 800);
+    return () => window.clearTimeout(handle);
+  }, [loading, hasChanges, document, title, clientName, clientEmail, clientAbn, internalNotes, expiresAt, id]);
 
   const handleDelete = async () => {
     if (!confirm("Delete this proposal?")) return;
@@ -302,6 +536,7 @@ export default function EditProposalPage() {
             ? {
                 ...prev,
                 events:         data.events,
+                revisions:      data.revisions,
                 authorName:     data.authorName,
                 authorEmail:    data.authorEmail,
                 viewerIsAuthor: data.viewerIsAuthor,
@@ -325,7 +560,12 @@ export default function EditProposalPage() {
         body:    JSON.stringify({ status: "LOST", lostReason: reason }),
       });
       if (!res.ok) { showToast("Failed to mark as lost"); return; }
-      setProposal((prev) => (prev ? { ...prev, status: "LOST", lostReason: reason } : prev));
+      const saved = await res.json().catch(() => ({}));
+      if (typeof saved.updatedAt === "string") {
+        baseUpdatedAtRef.current = saved.updatedAt;
+        setBaseUpdatedAt(saved.updatedAt);
+      }
+      setProposal((prev) => (prev ? { ...prev, status: "LOST", lostReason: reason, updatedAt: saved.updatedAt ?? prev.updatedAt } : prev));
       setShowLostModal(false);
       showToast("Marked as lost");
     } catch {
@@ -344,24 +584,138 @@ export default function EditProposalPage() {
         body:    JSON.stringify({ status: "DRAFT", lostReason: null }),
       });
       if (!res.ok) { showToast("Failed to reopen"); return; }
-      setProposal((prev) => (prev ? { ...prev, status: "DRAFT", lostReason: null } : prev));
+      const saved = await res.json().catch(() => ({}));
+      if (typeof saved.updatedAt === "string") {
+        baseUpdatedAtRef.current = saved.updatedAt;
+        setBaseUpdatedAt(saved.updatedAt);
+      }
+      setProposal((prev) => (prev ? { ...prev, status: "DRAFT", lostReason: null, updatedAt: saved.updatedAt ?? prev.updatedAt } : prev));
       showToast("Proposal reopened");
     } catch {
       showToast("Failed to reopen");
     }
   };
 
+  const reloadFromServer = async () => {
+    try {
+      const res = await fetch(`/api/proposals/${id}`);
+      if (!res.ok) { showToast("Couldn't reload this proposal"); return; }
+      const data = await res.json() as ProposalMeta;
+      const draft = draftFromProposal(data);
+      applyDraft(draft);
+      setProposal(data);
+      const loadedAt = typeof data.updatedAt === "string" ? data.updatedAt : null;
+      baseUpdatedAtRef.current = loadedAt;
+      setBaseUpdatedAt(loadedAt);
+      setSavedAt(loadedAt);
+      hasChangesRef.current = false;
+      setHasChanges(false);
+      conflictRef.current = false;
+      setConflictAt(null);
+      setSavePhase(loadedAt ? "saved" : "idle");
+      const backup = readLocalBackup(window.localStorage, id);
+      setBackupOffer(
+        backup && loadedAt && shouldOfferLocalRestore(backup, serverStateFromDraft(draft, loadedAt))
+          ? backup
+          : null
+      );
+    } catch {
+      showToast("Couldn't reload this proposal");
+    }
+  };
+
+  const restoreLocalBackup = () => {
+    if (!backupOffer || !proposal) return;
+    const draft: DraftFields = {
+      title:         backupOffer.title,
+      clientName:    backupOffer.clientName,
+      clientEmail:   backupOffer.clientEmail,
+      clientAbn:     backupOffer.clientAbn,
+      internalNotes: backupOffer.internalNotes,
+      expiresAt:     backupOffer.expiresAt,
+      document:      documentFromUnknown(backupOffer.content, proposal),
+    };
+    applyDraft(draft);
+    hasChangesRef.current = true;
+    setHasChanges(true);
+    setBackupOffer(null);
+  };
+
+  const discardLocalBackup = () => {
+    clearLocalBackup(window.localStorage, id);
+    setBackupOffer(null);
+  };
+
+  const previewRevision = async (version: number) => {
+    if (!proposal) return;
+    setHistoryPreviewLoading(true);
+    try {
+      const res = await fetch(`/api/proposals/${id}/revisions/${version}`);
+      if (!res.ok) { showToast("Couldn't open that version"); return; }
+      const data = await res.json();
+      const content = contentFromSnapshot(data.snapshot);
+      setHistoryPreview({
+        version:     data.version,
+        createdAt:   data.createdAt,
+        savedByName: data.savedByName ?? "Unknown user",
+        summary:     data.summary ?? "",
+        document:    documentFromUnknown(content, proposal),
+      });
+    } catch {
+      showToast("Couldn't open that version");
+    } finally {
+      setHistoryPreviewLoading(false);
+    }
+  };
+
+  const restoreRevision = async (version: number) => {
+    if (!proposal) return;
+    setRestoring(true);
+    try {
+      const res = await fetch(`/api/proposals/${id}/revisions/${version}`);
+      if (!res.ok) { showToast("Couldn't restore that version"); return; }
+      const data = await res.json();
+      const snap = (data.snapshot ?? {}) as Record<string, unknown>;
+      const current = draftRef.current;
+      const draft: DraftFields = {
+        title:         typeof snap.title === "string" ? snap.title : (current?.title ?? title),
+        clientName:    typeof snap.clientName === "string" ? snap.clientName : (current?.clientName ?? clientName),
+        clientEmail:   typeof snap.clientEmail === "string" ? snap.clientEmail : (current?.clientEmail ?? clientEmail),
+        clientAbn:     typeof snap.clientAbn === "string" ? snap.clientAbn : (current?.clientAbn ?? clientAbn),
+        internalNotes: typeof snap.internalNotes === "string" ? snap.internalNotes : (current?.internalNotes ?? internalNotes),
+        expiresAt:     typeof snap.expiresAt === "string" ? snap.expiresAt.slice(0, 10) : (current?.expiresAt ?? expiresAt),
+        document:      documentFromUnknown(contentFromSnapshot(snap), proposal),
+      };
+      const result = await saveProposal({ override: draft });
+      if (result === "saved") {
+        setShowHistory(false);
+        setHistoryPreview(null);
+        showToast("Restored. The version you replaced is in history if you want it back.");
+      } else if (result === "conflict") {
+        setShowHistory(false);
+        setHistoryPreview(null);
+      }
+    } catch {
+      showToast("Couldn't restore that version");
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   const handleDuplicate = async () => {
     if (!document) return;
-    await handleSave();
+    const saved = await saveProposal();
+    if (saved === "conflict" || saved === "error") return;
+    const draft = draftRef.current;
+    if (!draft) return;
     const res = await fetch("/api/proposals", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({
-        title:       `${title} (Copy)`,
-        clientName,
-        clientEmail,
-        content:     document,
+        title:       `${draft.title} (Copy)`,
+        clientName:  draft.clientName,
+        clientEmail: draft.clientEmail,
+        content:     draft.document,
       }),
     });
     if (!res.ok) { showToast("Failed to duplicate"); return; }
@@ -412,8 +766,12 @@ export default function EditProposalPage() {
     }
     setSending(true);
     setSendError("");
-    await handleSave();
     try {
+      const saved = await saveProposal();
+      if (saved === "conflict" || saved === "error") {
+        setSendError("We couldn't save your latest edits, so the email wasn't sent.");
+        return;
+      }
       const res = await fetch(`/api/proposals/${id}/send`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -449,8 +807,12 @@ export default function EditProposalPage() {
     }
     setPreviewSending(true);
     setPreviewError("");
-    await handleSave();
     try {
+      const saved = await saveProposal();
+      if (saved === "conflict" || saved === "error") {
+        setPreviewError("We couldn't save your latest edits, so the email wasn't sent.");
+        return;
+      }
       const res = await fetch(`/api/proposals/${id}/preview`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -522,7 +884,6 @@ export default function EditProposalPage() {
     );
   }
 
-  const isAccepted = proposal.status === "ACCEPTED";
   // Admins can open & edit any proposal, but sending, follow-ups and deletion
   // stay with the author. (Older API responses omit the flag -> treat as author.)
   const isAuthor = proposal.viewerIsAuthor !== false;
@@ -562,6 +923,23 @@ export default function EditProposalPage() {
         </div>
       )}
 
+      {conflictAt && (
+        <SaveConflictBanner
+          updatedAt={conflictAt}
+          onReload={() => { void reloadFromServer(); }}
+          onOverwrite={() => { void saveProposal({ force: true }); }}
+          overwriting={saving}
+        />
+      )}
+
+      {backupOffer && !conflictAt && !isAccepted && (
+        <UnsavedChangesBanner
+          savedAt={backupOffer.savedAt}
+          onRestore={restoreLocalBackup}
+          onDiscard={discardLocalBackup}
+        />
+      )}
+
       <div className="flex min-h-full">
         <div className="flex-1 flex flex-col min-h-full overflow-hidden">
           {/* Sticky header */}
@@ -588,14 +966,17 @@ export default function EditProposalPage() {
               </div>
               <div className="flex items-center gap-2">
                 {!isAccepted && (
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                  >
-                    <Save size={14} />
-                    {saving ? "Saving..." : "Save"}
-                  </button>
+                  <>
+                    {!conflictAt && <SaveStatusText phase={savePhase} savedAt={savedAt} />}
+                    <button
+                      onClick={() => { void saveProposal(); }}
+                      disabled={saving}
+                      className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                    >
+                      <Save size={14} />
+                      Save
+                    </button>
+                  </>
                 )}
                 {isAuthor && (
                   <button
@@ -767,6 +1148,7 @@ export default function EditProposalPage() {
           {/* Editor (fills remaining height) */}
           <div className="flex flex-1 overflow-hidden bg-gray-50">
             <ProposalEditor
+              key={editorEpoch}
               initialDocument={document}
               onUpdate={handleEditorUpdate}
               gstRegistered={gstRegistered}
@@ -989,42 +1371,23 @@ export default function EditProposalPage() {
           </div>
         </div>
       )}
-      {/* History / change log modal */}
       {showHistory && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/20" onClick={() => setShowHistory(false)} />
-          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
-              <div className="flex items-center gap-2">
-                <History size={18} className="text-gray-600" />
-                <h2 className="text-sm font-semibold text-gray-900">Activity &amp; change log</h2>
-              </div>
-              <button onClick={() => setShowHistory(false)} className="p-1 text-gray-400 hover:text-gray-600">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="px-5 py-4 overflow-y-auto">
-              <p className="text-xs text-gray-500 mb-3">
-                Created by {proposal.authorName ?? "the author"}.
-              </p>
-              {(!proposal.events || proposal.events.length === 0) ? (
-                <p className="text-sm text-gray-500">No activity recorded yet.</p>
-              ) : (
-                <ul className="space-y-3">
-                  {proposal.events.map((ev) => (
-                    <li key={ev.id} className="flex items-start gap-3 text-sm">
-                      <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-gray-300 shrink-0" />
-                      <div>
-                        <p className="text-gray-900">{describeEvent(ev)}</p>
-                        <p className="text-xs text-gray-400">{formatDate(ev.createdAt)}</p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        </div>
+        <ProposalHistoryPanel
+          authorName={proposal.authorName ?? "the author"}
+          revisions={proposal.revisions ?? []}
+          activity={(proposal.events ?? []).map((ev) => ({
+            id: ev.id,
+            text: describeEvent(ev),
+            createdAt: ev.createdAt,
+          }))}
+          preview={historyPreview}
+          previewLoading={historyPreviewLoading}
+          restoreDisabled={isAccepted}
+          restoring={restoring}
+          onClose={() => { setShowHistory(false); setHistoryPreview(null); }}
+          onPreview={(version) => { void previewRevision(version); }}
+          onRestore={(version) => { void restoreRevision(version); }}
+        />
       )}
     </Shell>
   );
