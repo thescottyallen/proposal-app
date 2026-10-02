@@ -84,7 +84,7 @@ export async function POST(
     const updatedDoc = applyPaymentChoices(withChoices, paymentChoices ?? {});
     if (!allPaymentChoicesResolved(updatedDoc)) {
       return NextResponse.json(
-        { error: "Please choose monthly or upfront before accepting." },
+        { error: "Please choose a payment option before accepting." },
         { status: 400 }
       );
     }

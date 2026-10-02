@@ -12,7 +12,12 @@ import {
   DiscountType,
   DepositType,
 } from "@/lib/pricing-types";
-import { computePaymentQuote, formatCurrency } from "@/lib/utils";
+import {
+  computePaymentQuote,
+  formatCurrency,
+  offeredPaymentChoices,
+  projectStageLine,
+} from "@/lib/utils";
 import { PaymentOptionsCards } from "./PaymentOptionsCards";
 
 interface PricingSettingsPanelProps {
@@ -106,7 +111,7 @@ export function PricingSettingsPanel({
               />
               <div>
                 <p className="text-sm text-gray-700">Payment options</p>
-                <p className="text-xs text-gray-400">Offer this engagement as a monthly payment with a minimum term, or one upfront payment with a discount. Line items stay saved. Turn this off and they come back.</p>
+                <p className="text-xs text-gray-400">Offer a monthly payment, an upfront payment, a project fee, or a mix of those. Line items stay saved. Turn this off and they come back.</p>
               </div>
             </label>
             {settings.paymentOptionsEnabled && (
@@ -375,15 +380,67 @@ function PaymentOptionsFields({
   update: (patch: Partial<ProposalPricingSettings>) => void;
 }) {
   const quote = computePaymentQuote(settings);
+  const offered = offeredPaymentChoices(settings);
   const fmt = (amount: number) => formatCurrency(amount, settings.currency, settings.roundingMode);
   const discountLabel = settings.paymentUpfrontDiscountType === "fixed"
     ? `less ${fmt(settings.paymentUpfrontDiscountValue ?? 0)}`
     : settings.paymentUpfrontDiscountType === "percentage" && (settings.paymentUpfrontDiscountValue ?? 0) > 0
       ? `less ${settings.paymentUpfrontDiscountValue}%`
       : null;
+  const percentSum = (settings.paymentProjectStage1Percent ?? 50) + (settings.paymentProjectStage2Percent ?? 50);
+  const splitValid = quote.projectPercentsValid;
+
+  const setOffered = (kind: "monthly" | "upfront" | "project", on: boolean) => {
+    const monthly = kind === "monthly" ? on : settings.paymentMonthlyOffered !== false;
+    const upfront = kind === "upfront" ? on : settings.paymentUpfrontOffered !== false;
+    const project = kind === "project" ? on : settings.paymentProjectOffered === true;
+    if (!monthly && !upfront && !project) return;
+    if (kind === "monthly") {
+      update({ paymentMonthlyOffered: on });
+      return;
+    }
+    if (kind === "upfront") {
+      update({ paymentUpfrontOffered: on });
+      return;
+    }
+    update({
+      paymentProjectOffered: on,
+      ...(on ? {
+        paymentProjectFee: settings.paymentProjectFee ?? 0,
+        paymentProjectStage1Percent: settings.paymentProjectStage1Percent ?? 50,
+        paymentProjectStage2Percent: settings.paymentProjectStage2Percent ?? 50,
+      } : {}),
+    });
+  };
 
   return (
     <div className="mt-4 ml-6 space-y-4">
+      <div>
+        <p className="text-xs font-medium text-gray-600 mb-2">Offer</p>
+        <div className="flex flex-wrap gap-4">
+          <OfferToggle
+            label="Monthly"
+            testId="payment-offer-monthly"
+            checked={offered.includes("monthly")}
+            onChange={(on) => setOffered("monthly", on)}
+          />
+          <OfferToggle
+            label="Upfront"
+            testId="payment-offer-upfront"
+            checked={offered.includes("upfront")}
+            onChange={(on) => setOffered("upfront", on)}
+          />
+          <OfferToggle
+            label="Project fee"
+            testId="payment-offer-project"
+            checked={offered.includes("project")}
+            onChange={(on) => setOffered("project", on)}
+          />
+        </div>
+        <p className="text-xs text-gray-400 mt-1">Keep at least one on. If Project fee is the only one, the client doesn&apos;t have to choose.</p>
+      </div>
+
+      {offered.includes("monthly") && (
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Monthly amount</label>
@@ -410,7 +467,10 @@ function PaymentOptionsFields({
           />
         </div>
       </div>
+      )}
 
+      {offered.includes("upfront") && (
+      <>
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-2">Upfront discount</label>
         <div className="flex items-center gap-2">
@@ -472,23 +532,160 @@ function PaymentOptionsFields({
         />
         <p className="text-xs text-gray-400 mt-1">Leave this blank to use the calculated price, or type a round number.</p>
       </div>
+      </>
+      )}
 
+      {offered.includes("project") && (
+        <div className="space-y-3" data-testid="payment-project-fields">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Total fee (ex GST)</label>
+            <input
+              type="number"
+              data-testid="payment-project-fee"
+              value={settings.paymentProjectFee ?? 0}
+              onChange={e => update({ paymentProjectFee: parseFloat(e.target.value) || 0 })}
+              min={0}
+              step={100}
+              className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <p className="text-xs text-gray-500">Split the fee into two stages. The percentages need to add up to 100.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <StageFields
+              title="First stage"
+              percentTestId="payment-project-stage-1-percent"
+              labelTestId="payment-project-stage-1-label"
+              percent={settings.paymentProjectStage1Percent ?? 50}
+              label={settings.paymentProjectStage1Label ?? ""}
+              labelPlaceholder="On commencement"
+              onPercent={value => update({ paymentProjectStage1Percent: value })}
+              onLabel={value => update({ paymentProjectStage1Label: value || null })}
+            />
+            <StageFields
+              title="Second stage"
+              percentTestId="payment-project-stage-2-percent"
+              labelTestId="payment-project-stage-2-label"
+              percent={settings.paymentProjectStage2Percent ?? 50}
+              label={settings.paymentProjectStage2Label ?? ""}
+              labelPlaceholder="On completion"
+              onPercent={value => update({ paymentProjectStage2Percent: value })}
+              onLabel={value => update({ paymentProjectStage2Label: value || null })}
+            />
+          </div>
+          {splitValid ? (
+            <ul className="text-xs text-gray-600 space-y-1" data-testid="payment-project-stage-preview">
+              {quote.projectStages.map((stage) => (
+                <li key={stage.label}>{projectStageLine(stage, settings.gstEnabled, fmt)}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-red-600" data-testid="payment-project-split-error">
+              These percentages add up to {percentSum}. They need to add up to 100.
+            </p>
+          )}
+          <IncludedField
+            label="What's included (project fee)"
+            testId="payment-project-included"
+            value={settings.paymentProjectIncluded ?? ""}
+            onChange={value => update({ paymentProjectIncluded: value || null })}
+          />
+        </div>
+      )}
+
+      {(offered.includes("monthly") || offered.includes("upfront")) && (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <IncludedField
-          label="What's included (monthly)"
-          testId="payment-monthly-included"
-          value={settings.paymentMonthlyIncluded ?? ""}
-          onChange={value => update({ paymentMonthlyIncluded: value || null })}
-        />
-        <IncludedField
-          label="What's included (upfront)"
-          testId="payment-upfront-included"
-          value={settings.paymentUpfrontIncluded ?? ""}
-          onChange={value => update({ paymentUpfrontIncluded: value || null })}
-        />
+        {offered.includes("monthly") && (
+          <IncludedField
+            label="What's included (monthly)"
+            testId="payment-monthly-included"
+            value={settings.paymentMonthlyIncluded ?? ""}
+            onChange={value => update({ paymentMonthlyIncluded: value || null })}
+          />
+        )}
+        {offered.includes("upfront") && (
+          <IncludedField
+            label="What's included (upfront)"
+            testId="payment-upfront-included"
+            value={settings.paymentUpfrontIncluded ?? ""}
+            onChange={value => update({ paymentUpfrontIncluded: value || null })}
+          />
+        )}
       </div>
+      )}
 
       <PaymentOptionsCards settings={settings} />
+    </div>
+  );
+}
+
+function OfferToggle({
+  label,
+  testId,
+  checked,
+  onChange,
+}: {
+  label: string;
+  testId: string;
+  checked: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+      <input
+        type="checkbox"
+        data-testid={testId}
+        checked={checked}
+        onChange={e => onChange(e.target.checked)}
+        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+      />
+      {label}
+    </label>
+  );
+}
+
+function StageFields({
+  title,
+  percentTestId,
+  labelTestId,
+  percent,
+  label,
+  labelPlaceholder,
+  onPercent,
+  onLabel,
+}: {
+  title: string;
+  percentTestId: string;
+  labelTestId: string;
+  percent: number;
+  label: string;
+  labelPlaceholder: string;
+  onPercent: (value: number) => void;
+  onLabel: (value: string) => void;
+}) {
+  return (
+    <div>
+      <p className="text-xs font-medium text-gray-600 mb-1">{title}</p>
+      <div className="flex items-center gap-2 mb-2">
+        <input
+          type="number"
+          data-testid={percentTestId}
+          value={percent}
+          onChange={e => onPercent(parseFloat(e.target.value) || 0)}
+          min={0}
+          max={100}
+          step={1}
+          className="w-20 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <span className="text-sm text-gray-400">%</span>
+      </div>
+      <input
+        type="text"
+        data-testid={labelTestId}
+        value={label}
+        onChange={e => onLabel(e.target.value)}
+        placeholder={labelPlaceholder}
+        className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
     </div>
   );
 }
