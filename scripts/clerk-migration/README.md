@@ -7,7 +7,7 @@ Scotty runs it on his own machine. The script prompts for secrets with `read -rs
 ## Before you run a mode
 
 - Clone [clerk/migration-tool](https://github.com/clerk/migration-tool) and check out commit `bbf75584668e9f10a239b545adbce57e1308c974`. Pass that directory as `--tool-dir`.
-- Pick a private `--workdir` (the default is `~/clerk-migration-private`). It is created mode `0700`. The script refuses a folder inside a git repo or under Dropbox, iCloud, OneDrive, or Google Drive.
+- Pick a private `--workdir` (the default is `~/clerk-migration-private`). It is created mode `0700`. The script refuses a folder inside a git repo, under `~/Desktop` or `~/Documents` (including a symlink that resolves there, because iCloud can sync them), or under Dropbox, iCloud, OneDrive, or Google Drive.
 - Put the Clerk user export inside that workdir and pass it as `--export`.
 - Connection settings are `PGHOST`, `PGPORT`, `PGUSER`, and `PGDATABASE`. The password comes from the prompt, or from `~/.pgpass` when that file is mode `0600`. SSL uses `require`. Set `PGSSLMODE=verify-full` and `PGSSLROOTCERT` to a CA file when you want the Supabase CA checked.
 - The script refuses port `6543` (the transaction pooler).
@@ -26,7 +26,7 @@ Remap and rollback lock the eight tables that store a Clerk user id. Each lock c
 |---|---|
 | `preflight` | Nothing. Checks tools, the pinned commit, the database, and the schema guard. |
 | `backup` | Writes a custom-format dump and `freeze-start`. |
-| `import --export` | Imports users with the pinned tool. |
+| `import --export` | Imports users with the pinned tool. Refuses to start when any production user has no `externalId`. |
 | `build-map --export` | Loads the id map and the remap functions. |
 | `remap` | Rewrites the eight user-id columns to production ids. |
 | `verify [--reverse]` | Read-only either way. |
@@ -34,11 +34,25 @@ Remap and rollback lock the eight tables that store a Clerk user id. Each lock c
 | `revoke-dev-sessions` | Revokes active development-instance sessions. |
 | `demote-dev-admins --keep` | Sets other development admins to `member`, merging only the role key. |
 | `restore-dev-roles --export` | Puts development roles back. Users missing from the export are listed and left alone. |
-| `rollback [--orphans-to]` | Revokes pending production invitations and remaps ids back. |
+| `rollback [--orphans-to]` | Checks the reverse remap, then revokes pending production invitations, then remaps ids back. |
 | `purge-export` | Deletes the user export after the 24 hour cutoff. |
 | `cleanup` | Drops the `clerk_migration` schema and deletes the workdir, 14 days after `freeze-start`. |
 
-`preflight` and `remap` stop when the latest applied Prisma migration is not `20261002041000_add_proposal_list_indexes`, or when `prisma/schema.prisma` differs from commit `9acabc8`. The error says the user-id column list must be re-checked before the script is run.
+`preflight`, `remap`, and `rollback` stop when the latest applied Prisma migration is not `20261002041000_add_proposal_list_indexes`, or when `prisma/schema.prisma` differs from commit `9acabc8`. The error says the user-id column list must be re-checked before the script is run.
+
+`--apply` prints the database host, database name, eight table counts, and business name, then asks you to type the Supabase project ref (`db.<ref>.supabase.co`) or, on any other host, the database name. A Clerk write prints the user count and the first three emails, then asks you to type the user count. A wrong answer stops before anything is changed.
+
+## Re-running a partial import
+
+The pinned tool sets each imported user's `externalId` to that person's development user id. If an import stops part way through, run the same `import --apply` again with the same export. The script always sends the whole file. It does not pass `--resume-after`.
+
+Users who were already created fail one at a time (duplicate email). The tool logs that failure and keeps going, and it can still exit 0. This script moves those logs into the workdir. It aborts if the tool directory is dirty afterwards.
+
+Import will not start when the production instance already has a user with no `externalId`. Leave users who already have an `externalId` in place.
+
+## Preview deploys
+
+Preview builds fail without Clerk development keys (`pk_test_` and `sk_test_`) and a `DATABASE_URL`. Set `PRODUCTION_DB_HOST` to the production database host or Supabase project ref. That value is not a secret and is not a connection string. The host parsed from `DATABASE_URL` must be different. See `SETUP.md`.
 
 ## Tests
 

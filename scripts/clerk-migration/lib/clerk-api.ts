@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { readFileSync, writeFileSync } from "node:fs";
 import {
+  exportedMetadata,
   planDemote,
   planRestore,
   roleFromExport,
@@ -190,14 +191,18 @@ function readExport(path: string): Record<string, string>[] {
   return rows;
 }
 
-function metadataObject(raw: string): unknown {
-  const trimmed = raw.trim();
-  if (!trimmed) return {};
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return null;
-  }
+export function maskEmail(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) return "***";
+  return `${email.slice(0, 1)}***${email.slice(at)}`;
+}
+
+export function usersMissingExternalId(users: { id: string; external_id?: string | null }[]): string[] {
+  return users.filter((user) => !user.external_id).map((user) => user.id);
+}
+
+export function activeSessionsPath(userId: string): string {
+  return `/v1/sessions?status=active&user_id=${encodeURIComponent(userId)}`;
 }
 
 function summarize(path: string): void {
@@ -205,7 +210,7 @@ function summarize(path: string): void {
   const counts: Record<AppRole, number> = { admin: 0, member: 0, viewer: 0 };
   const missing: string[] = [];
   for (const row of rows) {
-    const role = roleFromExport(metadataObject(row.public_metadata ?? ""));
+    const role = roleFromExport(exportedMetadata(row.public_metadata ?? ""));
     if (!role) missing.push(`${row.id} ${row.primary_email_address}`);
     else counts[role] += 1;
   }
@@ -247,19 +252,44 @@ async function writeProdUsers(dest: string): Promise<void> {
   console.log(`wrote ${users.length} prod users`);
 }
 
+async function activeSessions(): Promise<ClerkSession[]> {
+  const users = await listAll<ClerkUser>("/v1/users");
+  const sessions: ClerkSession[] = [];
+  for (const user of users) {
+    const page = await listAll<ClerkSession>(activeSessionsPath(user.id));
+    sessions.push(...page);
+  }
+  return sessions;
+}
+
 async function listSessions(): Promise<void> {
-  const sessions = await listAll<ClerkSession>("/v1/sessions?status=active");
+  const sessions = await activeSessions();
   console.log(`active sessions ${sessions.length}`);
   for (const session of sessions) console.log(`${session.id} ${session.user_id} ${session.status}`);
 }
 
 async function revokeSessions(): Promise<void> {
-  const sessions = await listAll<ClerkSession>("/v1/sessions?status=active");
+  const sessions = await activeSessions();
   for (const session of sessions) {
     await clerk(`/v1/sessions/${session.id}/revoke`, { method: "POST", body: "{}" });
     console.log(`revoked ${session.id}`);
   }
   console.log(`revoked ${sessions.length} sessions`);
+}
+
+async function describeInstance(requireExternalId: boolean): Promise<void> {
+  const users = await listAll<ClerkUser>("/v1/users");
+  console.log(`users ${users.length}`);
+  for (const user of users.slice(0, 3)) {
+    console.log(`email ${maskEmail(primaryEmail(user))}`);
+  }
+  const missing = usersMissingExternalId(users);
+  if (missing.length > 0) {
+    console.log(`without externalId ${missing.join(" ")}`);
+    if (requireExternalId) {
+      throw new Error(`prod users without externalId: ${missing.join(", ")}`);
+    }
+  }
 }
 
 function printUsers(users: ClerkUser[], label: string): void {
@@ -319,7 +349,7 @@ async function restore(exportPath: string, apply: boolean): Promise<void> {
   const users = await listAll<ClerkUser>("/v1/users");
   const plan = planRestore(
     users.map((user) => user.id),
-    rows.map((row) => ({ id: row.id, publicMetadata: metadataObject(row.public_metadata ?? "") }))
+    rows.map((row) => ({ id: row.id, publicMetadata: exportedMetadata(row.public_metadata ?? "") }))
   );
   for (const userId of plan.missingFromExport) console.log(`missing from export ${userId}`);
   for (const change of plan.changes) {
@@ -367,6 +397,9 @@ async function main(): Promise<void> {
       break;
     case "restore-apply":
       await restore(arg, true);
+      break;
+    case "describe-instance":
+      await describeInstance(arg === "--require-external-id");
       break;
     default:
       throw new Error("unknown clerk api command");

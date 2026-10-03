@@ -16,6 +16,29 @@ export function assertProductionConfig(env: ProcessEnv = process.env): void {
   }
 }
 
+export function databaseHost(databaseUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(databaseUrl);
+  } catch {
+    throw new Error("Preview DATABASE_URL is not a valid connection URL");
+  }
+  if (!url.hostname) {
+    throw new Error("Preview DATABASE_URL is not a valid connection URL");
+  }
+  return url.hostname.toLowerCase();
+}
+
+/** True when the preview database host is the production host or contains its project ref. */
+export function previewPointsAtProduction(databaseUrl: string, productionHost: string): boolean {
+  const host = databaseHost(databaseUrl);
+  const marker = productionHost.trim().toLowerCase();
+  if (!marker) return false;
+  if (host === marker) return true;
+  if (marker.includes(".")) return false;
+  return host.startsWith(`${marker}.`) || host.includes(`.${marker}.`);
+}
+
 /** Preview deploys stay on the Clerk development instance and a separate database. */
 export function assertPreviewConfig(env: ProcessEnv = process.env): void {
   if (env.VERCEL_ENV !== "preview") return;
@@ -25,8 +48,11 @@ export function assertPreviewConfig(env: ProcessEnv = process.env): void {
     throw new Error("Preview must use Clerk development keys");
   }
   const database = env.DATABASE_URL ?? "";
-  const productionDatabase = env.PRODUCTION_DATABASE_URL ?? "";
-  if (!database || (productionDatabase !== "" && database === productionDatabase)) {
+  const productionHost = env.PRODUCTION_DB_HOST ?? "";
+  if (!database || !productionHost) {
+    throw new Error("Preview must use a non-production database");
+  }
+  if (previewPointsAtProduction(database, productionHost)) {
     throw new Error("Preview must use a non-production database");
   }
 }

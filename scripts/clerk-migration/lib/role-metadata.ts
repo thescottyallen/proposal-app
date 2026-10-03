@@ -13,6 +13,22 @@ export function roleOnlyPatch(role: AppRole | null): RoleMetadataBody {
   return { public_metadata: { role } };
 }
 
+/** Parsed public_metadata from the export. Invalid JSON stops a restore instead of clearing the role. */
+export function exportedMetadata(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed) as unknown;
+  } catch {
+    throw new Error("export public_metadata could not be read");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("export public_metadata could not be read");
+  }
+  return parsed;
+}
+
 export function roleFromExport(metadata: unknown): AppRole | null {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
   const role = (metadata as { role?: unknown }).role;

@@ -27,7 +27,7 @@ npm install
 
 Production (`VERCEL_ENV=production`) refuses to build or start unless `CLERK_AUTHORIZED_PARTIES` is set to a comma-separated list of allowed origins. That list is passed to Clerk middleware so a token whose `azp` claim is a development origin is rejected.
 
-Preview deploys must use Clerk development keys (`pk_test_` and `sk_test_`) and a database that is not the production database. Set `PRODUCTION_DATABASE_URL` to the production connection string so the preview check can compare it with `DATABASE_URL`.
+Preview builds fail without Clerk development keys (`pk_test_` and `sk_test_`) and a `DATABASE_URL`. Set `PRODUCTION_DB_HOST` to the production database host or Supabase project ref. That value is not a secret and is not a connection string. The host parsed from `DATABASE_URL` must be different.
 
 Team invites accept only the roles `admin`, `member`, and `viewer`. The invite stores that role in `publicMetadata` and sends the person to `{NEXT_PUBLIC_APP_URL}/sign-up`.
 

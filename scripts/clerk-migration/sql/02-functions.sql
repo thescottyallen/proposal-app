@@ -31,23 +31,36 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
      AND coalesce(b.acceptance_email_subject, '') = ''
      AND coalesce(b.acceptance_email_message, '') = '' $$;
 
--- Stops if the schema has drifted from what this code was written against
+-- Stops if the schema has drifted from what this code was written against.
+-- migrate.sh also checks sha256(prisma/schema.prisma) against commit 9acabc8 before calling this.
 CREATE OR REPLACE FUNCTION clerk_migration.check_schema()
 RETURNS void LANGUAGE plpgsql AS $fn$
 DECLARE got text;
+  recheck CONSTANT text := 're-check the user-ID column list (clerk_migration.cols()) and settings_is_default() before running';
 BEGIN
+  IF to_regclass('public._prisma_migrations') IS NULL THEN
+    RAISE EXCEPTION 'no _prisma_migrations table: %', recheck;
+  END IF;
+  IF EXISTS (SELECT 1 FROM public._prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL) THEN
+    RAISE EXCEPTION 'a Prisma migration is unfinished: %', recheck;
+  END IF;
+  SELECT migration_name INTO got FROM public._prisma_migrations
+   WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name DESC LIMIT 1;
+  IF got IS DISTINCT FROM '20261002041000_add_proposal_list_indexes' THEN
+    RAISE EXCEPTION 'latest applied Prisma migration is %, expected 20261002041000_add_proposal_list_indexes: %', got, recheck;
+  END IF;
   SELECT string_agg(column_name, ',' ORDER BY column_name) INTO got
     FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'business_settings';
   IF got IS DISTINCT FROM 'abn,acceptance_email_message,acceptance_email_subject,business_name,created_at,'
      'default_acceptance_message,default_currency,gst_registered,id,invoice_prefix,invoice_seq,'
      'rounding_mode,updated_at,user_id' THEN
-    RAISE EXCEPTION 'business_settings columns changed (%): update settings_is_default() first', got;
+    RAISE EXCEPTION 'business_settings columns changed (%): %', got, recheck;
   END IF;
   IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND
       (table_name, column_name) IN (('clients','created_by'),('contacts','created_by'),('proposals','created_by'),
         ('proposal_revisions','created_by'),('templates','created_by'),('content_blocks','created_by'),
         ('proposal_events','metadata'))) <> 7 THEN
-    RAISE EXCEPTION 'an expected user-ID column is missing';
+    RAISE EXCEPTION 'an expected user-ID column is missing: %', recheck;
   END IF;
 END $fn$;
 
@@ -62,6 +75,7 @@ BEGIN
   PERFORM clerk_migration.check_schema();
 
   -- Hold off app writes until this transaction ends. Reads still work.
+  -- lock_timeout applies to each table's lock, so the worst case wait is about 8 x 10s = 80s.
   PERFORM set_config('lock_timeout', '10s', true);
   LOCK TABLE public.business_settings, public.clients, public.contacts, public.proposals,
              public.proposal_revisions, public.templates, public.content_blocks, public.proposal_events

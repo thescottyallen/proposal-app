@@ -115,7 +115,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/v1/users"):
             body = json.dumps(USERS).encode()
         elif self.path.startswith("/v1/sessions"):
-            body = b"[]"
+            if "user_id=" not in self.path:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"errors":[{"message":"user_id or client_id is required"}]}')
+                return
+            body = b'[{"id":"sess_1","user_id":"user_prodA","status":"active"}]'
         elif self.path.startswith("/v1/invitations"):
             body = b"[]"
         else:
@@ -133,7 +139,7 @@ PY
 MOCK_PID=$!
 export CLERK_API_BASE=http://127.0.0.1:5519
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  python3 -c 'import socket; s=socket.create_connection(("127.0.0.1", 5519), 1); s.close()' && break
+  python3 -c 'import socket; s=socket.create_connection(("127.0.0.1", 5519), 1); s.close()' >/dev/null 2>&1 && break
   sleep 0.2
 done
 

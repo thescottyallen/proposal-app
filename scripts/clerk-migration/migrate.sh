@@ -24,7 +24,6 @@ SQL_DIR="$SCRIPT_DIR/sql"
 API="$SCRIPT_DIR/lib/clerk-api.ts"
 SCHEMA_FILE="$REPO_ROOT/prisma/schema.prisma"
 EXPECTED_SCHEMA_SHA=36736fadb532f028d9200f0c763f3436b5c6844128faf5a11635880c9c91aa6e
-EXPECTED_MIGRATION=20261002041000_add_proposal_list_indexes
 TOOL_PIN=bbf75584668e9f10a239b545adbce57e1308c974
 
 TABLES=(
@@ -49,7 +48,12 @@ REVERSE=0
 LOG=""
 TMP_FILES=""
 
+pg_pw=""
+clerk_key=""
+
 on_exit() {
+  pg_pw=""
+  clerk_key=""
   unset PGPASSWORD CLERK_SECRET_KEY PGHOST PGPORT PGUSER PGDATABASE PGSSLMODE PGSSLROOTCERT || true
   if [[ -n "${TMP_FILES:-}" ]]; then
     # shellcheck disable=SC2086
@@ -111,6 +115,13 @@ Connection settings (PGHOST, PGPORT, PGUSER, PGDATABASE) come from the
 environment or a prompt. The password comes from read -rs, or from ~/.pgpass
 when that file is mode 0600. SSL uses require, or verify-full when
 PGSSLMODE=verify-full and PGSSLROOTCERT points at a CA file.
+
+Before --apply changes the database, the script prints the host, the database
+name, the eight table counts and the business name, then asks you to type the
+Supabase project ref (the label in db.<ref>.supabase.co). Any other host asks
+for the database name instead. Before --apply changes Clerk, it prints the
+user count and the first three emails, then asks you to type the user count.
+Import refuses when the production instance already has a user with no externalId.
 
 Freeze notes:
   backup --apply writes freeze-start in UTC.
@@ -195,6 +206,7 @@ prepare_workdir() {
   if [[ "$lower" == *dropbox* || "$lower" == *icloud* || "$lower" == *onedrive* || "$lower" == *"google drive"* || "$lower" == *googledrive* || "$lower" == *"mobile documents"* || "$lower" == *cloudstorage* ]]; then
     die "refusing a workdir under a cloud-sync folder"
   fi
+  refuse_synced_home "$abs"
   if git -C "$parent_real" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     die "refusing a workdir inside a git repository"
   fi
@@ -246,17 +258,43 @@ require_export() {
   note "export ${rel}"
 }
 
+refuse_synced_home() {
+  local abs=$1 name resolved
+  for name in Desktop Documents; do
+    if [[ -d "$HOME/$name" || -L "$HOME/$name" ]]; then
+      resolved=$(realpath "$HOME/$name")
+      case "$abs" in
+        "$resolved"|"$resolved"/*)
+          die "refusing a workdir under ${name} because iCloud can sync it"
+          ;;
+      esac
+    fi
+  done
+}
+
+tool_status() {
+  env -u CLERK_SECRET_KEY -u PGPASSWORD git -C "$TOOL_DIR" status --porcelain --ignored -- . ':(exclude)node_modules'
+}
+
+require_clean_tool() {
+  local dirty
+  dirty=$(tool_status)
+  if [[ -n "$dirty" ]]; then
+    printf '%s\n' "$dirty" >&2
+    die "migration tool working tree is not clean"
+  fi
+}
+
 require_tool() {
-  local head dirty
+  local head
   [[ -n "$TOOL_DIR" ]] || die "--tool-dir is required"
   [[ -d "$TOOL_DIR" ]] || die "tool dir is missing"
   if [[ -e "$TOOL_DIR/.env" ]]; then
     die "refusing to run while the tool directory contains a .env file"
   fi
-  head=$(git -C "$TOOL_DIR" rev-parse HEAD)
+  head=$(env -u CLERK_SECRET_KEY -u PGPASSWORD git -C "$TOOL_DIR" rev-parse HEAD)
   [[ "$head" == "$TOOL_PIN" ]] || die "migration tool is not at the pinned commit ${TOOL_PIN}"
-  dirty=$(git -C "$TOOL_DIR" status --porcelain)
-  [[ -z "$dirty" ]] || die "migration tool working tree is not clean"
+  require_clean_tool
   note "migration tool ${head}"
 }
 
@@ -266,6 +304,7 @@ install_tool() {
     cd "$TOOL_DIR"
     env -u PGPASSWORD -u CLERK_SECRET_KEY HUSKY=0 bun install --frozen-lockfile
   ) 2>&1 | tee -a "$LOG" >&2
+  require_clean_tool
 }
 
 bun_at_least() {
@@ -334,6 +373,7 @@ prepare_db() {
   if [[ "$PGPORT" == "6543" ]]; then
     die "refusing the transaction pooler port"
   fi
+  pg_pw=""
   passfile="${HOME}/.pgpass"
   if [[ -f "$passfile" ]]; then
     mode=$(file_mode "$passfile")
@@ -347,14 +387,29 @@ prepare_db() {
     note "database connection accepted"
     return
   fi
-  prompt_secret PGPASSWORD "Postgres password"
-  export PGPASSWORD
-  env -u CLERK_SECRET_KEY psql -X -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null
+  prompt_secret pg_pw "Postgres password"
+  run_psql -c 'SELECT 1' >/dev/null
   note "database connection accepted"
 }
 
+run_psql() {
+  if [[ -n "$pg_pw" ]]; then
+    env -u CLERK_SECRET_KEY PGPASSWORD="$pg_pw" psql -X -v ON_ERROR_STOP=1 "$@"
+  else
+    env -u CLERK_SECRET_KEY -u PGPASSWORD psql -X -v ON_ERROR_STOP=1 "$@"
+  fi
+}
+
+run_pg_dump() {
+  if [[ -n "$pg_pw" ]]; then
+    env -u CLERK_SECRET_KEY PGPASSWORD="$pg_pw" pg_dump "$@"
+  else
+    env -u CLERK_SECRET_KEY -u PGPASSWORD pg_dump "$@"
+  fi
+}
+
 psql_value() {
-  env -u CLERK_SECRET_KEY psql -X -v ON_ERROR_STOP=1 -tA "$@"
+  run_psql -tA "$@"
 }
 
 run_sql() {
@@ -366,7 +421,7 @@ run_sql() {
   TMP_FILES="${TMP_FILES} ${tmp} ${out}"
   printf '%s\n' "$sql" > "$tmp"
   set +e
-  env -u CLERK_SECRET_KEY psql -X -v ON_ERROR_STOP=1 "$@" -f "$tmp" >"$out" 2>&1
+  run_psql "$@" -f "$tmp" >"$out" 2>&1
   status=$?
   set -e
   tee -a "$LOG" < "$out" >&2
@@ -410,32 +465,36 @@ file_sha256() {
   fi
 }
 
-schema_guard() {
-  local name hash
-  if ! name=$(psql_value -c "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY finished_at DESC, started_at DESC LIMIT 1" 2>>"$LOG"); then
-    note "schema guard: the applied migration list could not be read"
-    die_recheck
-  fi
-  name=${name//$'\n'/}
-  if [[ "$name" != "$EXPECTED_MIGRATION" ]]; then
-    note "schema guard: latest applied migration is '${name:-none}', expected ${EXPECTED_MIGRATION}"
-    die_recheck
-  fi
+schema_file_guard() {
+  local hash
   [[ -f "$SCHEMA_FILE" ]] || { note "schema guard: prisma/schema.prisma is missing"; die_recheck; }
   hash=$(file_sha256 "$SCHEMA_FILE")
   if [[ "$hash" != "$EXPECTED_SCHEMA_SHA" ]]; then
     note "schema guard: prisma/schema.prisma does not match commit 9acabc8"
     die_recheck
   fi
+}
+
+schema_db_guard() {
+  if ! run_sql "SELECT clerk_migration.check_schema();"; then
+    note "schema guard: check_schema failed"
+    die_recheck
+  fi
   note "schema guard passed"
+}
+
+schema_guard() {
+  schema_file_guard
+  schema_db_guard
 }
 
 require_clerk_key() {
   local prefix=$1
   unset CLERK_SECRET_KEY || true
-  prompt_secret CLERK_SECRET_KEY "Clerk secret key"
-  export CLERK_SECRET_KEY
-  if [[ "$CLERK_SECRET_KEY" != "$prefix"* ]]; then
+  clerk_key=""
+  prompt_secret clerk_key "Clerk secret key"
+  if [[ "$clerk_key" != "$prefix"* ]]; then
+    clerk_key=""
     die "this mode requires a ${prefix} key"
   fi
 }
@@ -445,7 +504,62 @@ bun_plain() {
 }
 
 bun_clerk() {
-  env -u PGPASSWORD bun "$@"
+  env -u PGPASSWORD CLERK_SECRET_KEY="$clerk_key" bun "$@"
+}
+
+show_database_target() {
+  local db names
+  db=$(psql_value -c "SELECT current_database()")
+  names=$(psql_value -c "SELECT COALESCE(string_agg(DISTINCT business_name, ', ' ORDER BY business_name), '(none)') FROM public.business_settings WHERE coalesce(business_name, '') <> ''")
+  note "database host ${PGHOST}"
+  note "database name ${db}"
+  note "business name ${names}"
+  run_sql "$(row_count_sql)" || die "could not read table counts"
+  printf '%s' "$db"
+}
+
+confirm_database_write() {
+  local db expected prompt typed=""
+  (( APPLY )) || return 0
+  db=$(show_database_target)
+  if [[ "$PGHOST" =~ ^db\.([a-z0-9]+)\.supabase\.co$ ]]; then
+    expected=${BASH_REMATCH[1]}
+    prompt="Type the Supabase project ref to confirm"
+  else
+    expected=$db
+    prompt="Type the database name to confirm"
+  fi
+  [[ -r /dev/tty ]] || die "a terminal is required to confirm the database target"
+  read -r -p "${prompt}: " typed </dev/tty
+  if [[ "$typed" != "$expected" ]]; then
+    die "database target was not confirmed; nothing was changed"
+  fi
+  note "database target confirmed"
+}
+
+clerk_instance_report() {
+  local report status
+  set +e
+  report=$(bun_clerk "$API" describe-instance "$@")
+  status=$?
+  set -e
+  printf '%s\n' "$report" | tee -a "$LOG" >&2
+  [[ "$status" -eq 0 ]] || die "Clerk instance check failed"
+  printf '%s' "$report"
+}
+
+confirm_clerk_write() {
+  local report count typed=""
+  report=$(clerk_instance_report "$@")
+  (( APPLY )) || return 0
+  count=$(printf '%s\n' "$report" | awk '/^users /{print $2; exit}')
+  [[ -n "$count" ]] || die "could not read the Clerk user count"
+  [[ -r /dev/tty ]] || die "a terminal is required to confirm the Clerk instance"
+  read -r -p "Type the user count to confirm this Clerk instance: " typed </dev/tty
+  if [[ "$typed" != "$count" ]]; then
+    die "Clerk instance was not confirmed; nothing was changed"
+  fi
+  note "Clerk instance confirmed"
 }
 
 lock_note() {
@@ -499,8 +613,11 @@ mode_preflight() {
   install_tool
   prepare_db
   check_client_versions
-  schema_guard
-  run_sql "$(printf 'BEGIN;\n\\i %s\nSELECT clerk_migration.check_schema();\nROLLBACK;\n' "$SQL_DIR/02-functions.sql")"
+  schema_file_guard
+  if ! run_sql "$(printf 'BEGIN;\n\\i %s\nSELECT clerk_migration.check_schema();\nROLLBACK;\n' "$SQL_DIR/02-functions.sql")"; then
+    die_recheck
+  fi
+  note "schema guard passed"
   note "preflight loaded the functions inside a transaction and rolled them back"
   note "preflight writes nothing"
 }
@@ -511,10 +628,11 @@ mode_backup() {
   note "planned check: pg_restore --list confirms TABLE DATA for all eight tables"
   run_sql "$(row_count_sql)"
   if (( APPLY )); then
-    env -u CLERK_SECRET_KEY pg_dump -Fc -f "$WORKDIR/backup.dump"
+    confirm_database_write
+    run_pg_dump -Fc -f "$WORKDIR/backup.dump"
     chmod 600 "$WORKDIR/backup.dump"
     local list table
-    list=$(env -u CLERK_SECRET_KEY pg_restore --list "$WORKDIR/backup.dump")
+    list=$(env -u CLERK_SECRET_KEY -u PGPASSWORD pg_restore --list "$WORKDIR/backup.dump")
     for table in "${TABLES[@]}"; do
       if ! printf '%s\n' "$list" | grep -F -q "TABLE DATA public ${table}"; then
         die "dump is missing TABLE DATA for ${table}"
@@ -534,15 +652,16 @@ mode_backup() {
 
 mode_import() {
   require_export
-  require_tool
   require_clerk_key "sk_live_"
+  confirm_clerk_write --require-external-id
+  require_tool
   bun_plain "$API" summarize-export "$EXPORT" 2>&1 | tee -a "$LOG" >&2
   if (( APPLY )); then
     install_tool
     local status=0
     (
       cd "$TOOL_DIR"
-      env -u PGPASSWORD bun migrate -y -t clerk -f "$EXPORT"
+      env -u PGPASSWORD CLERK_SECRET_KEY="$clerk_key" bun migrate -y -t clerk -f "$EXPORT"
     ) 2>&1 | tee -a "$LOG" >&2 || status=$?
     if [[ -d "$TOOL_DIR/logs" ]]; then
       local dest
@@ -551,7 +670,7 @@ mode_import() {
       note "moved tool logs to ${dest}"
     fi
     local dirty
-    dirty=$(git -C "$TOOL_DIR" status --porcelain)
+    dirty=$(tool_status)
     if [[ -n "$dirty" ]]; then
       note "migration tool working tree changed during import"
       printf '%s\n' "$dirty" | tee -a "$LOG" >&2
@@ -572,13 +691,14 @@ mode_build_map() {
   bun_clerk "$API" write-prod-users "$WORKDIR/prod_users.csv" 2>&1 | tee -a "$LOG" >&2
   chmod 600 "$WORKDIR/dev_users.csv" "$WORKDIR/prod_users.csv"
   if (( APPLY )); then
+    confirm_database_write
     (
       cd "$WORKDIR"
-      env -u CLERK_SECRET_KEY psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$SQL_DIR/01-build-map.sql"
+      run_psql --single-transaction -f "$SQL_DIR/01-build-map.sql"
     ) 2>&1 | tee -a "$LOG" >&2
     (
       cd "$WORKDIR"
-      env -u CLERK_SECRET_KEY psql -X -v ON_ERROR_STOP=1 --single-transaction -f "$SQL_DIR/02-functions.sql"
+      run_psql --single-transaction -f "$SQL_DIR/02-functions.sql"
     ) 2>&1 | tee -a "$LOG" >&2
     run_sql "SELECT count(*) AS map_size FROM clerk_migration.id_map;"
   else
@@ -601,6 +721,7 @@ ORDER BY tbl, col, stage;
 SQL
 )
   if (( APPLY )); then
+    confirm_database_write
     run_sql "$(printf '%s\n%s\n' "SELECT clerk_migration.remap('forward');" "$sql")"
   else
     run_sql "$(printf '%s\n%s\n%s\n%s\n' "BEGIN;" "SELECT clerk_migration.remap('forward');" "$sql" "ROLLBACK;")"
@@ -647,6 +768,7 @@ SQL
 mode_revoke_sessions() {
   require_clerk_key "sk_test_"
   if (( APPLY )); then
+    confirm_clerk_write
     bun_clerk "$API" revoke-sessions 2>&1 | tee -a "$LOG" >&2
   else
     bun_clerk "$API" list-sessions 2>&1 | tee -a "$LOG" >&2
@@ -658,6 +780,7 @@ mode_demote() {
   [[ -n "$KEEP" ]] || die "--keep is required"
   require_clerk_key "sk_test_"
   if (( APPLY )); then
+    confirm_clerk_write
     bun_clerk "$API" demote-apply "$KEEP" 2>&1 | tee -a "$LOG" >&2
   else
     bun_clerk "$API" demote-plan "$KEEP" 2>&1 | tee -a "$LOG" >&2
@@ -669,6 +792,7 @@ mode_restore() {
   require_export
   require_clerk_key "sk_test_"
   if (( APPLY )); then
+    confirm_clerk_write
     bun_clerk "$API" restore-apply "$EXPORT" 2>&1 | tee -a "$LOG" >&2
   else
     bun_clerk "$API" restore-plan "$EXPORT" 2>&1 | tee -a "$LOG" >&2
@@ -679,9 +803,10 @@ mode_restore() {
 mode_rollback() {
   require_clerk_key "sk_live_"
   prepare_db
+  schema_guard
   bun_clerk "$API" list-unmapped-users 2>&1 | tee -a "$LOG" >&2
   bun_clerk "$API" list-pending-invitations 2>&1 | tee -a "$LOG" >&2
-  local show
+  local show trial
   show=$(cat <<'SQL'
 SELECT tbl, col, row_id, from_id, to_id
 FROM clerk_migration.orphans
@@ -689,11 +814,17 @@ WHERE run_at = (SELECT max(run_at) FROM clerk_migration.orphans)
 ORDER BY tbl, row_id;
 SQL
 )
+  trial="$(printf '%s\n%s\n%s\n%s\n' "BEGIN;" "SELECT clerk_migration.remap('reverse', orphans_to => NULLIF(:'orphans_to', ''));" "$show" "ROLLBACK;")"
   if (( APPLY )); then
+    confirm_database_write
+    confirm_clerk_write
+    if ! run_sql "$trial" -v "orphans_to=${ORPHANS_TO}"; then
+      die "reverse remap check failed; production invitations were not revoked"
+    fi
     bun_clerk "$API" revoke-pending-invitations 2>&1 | tee -a "$LOG" >&2
     run_sql "$(printf '%s\n%s\n' "SELECT clerk_migration.remap('reverse', orphans_to => NULLIF(:'orphans_to', ''));" "$show")" -v "orphans_to=${ORPHANS_TO}"
   else
-    run_sql "$(printf '%s\n%s\n%s\n%s\n' "BEGIN;" "SELECT clerk_migration.remap('reverse', orphans_to => NULLIF(:'orphans_to', ''));" "$show" "ROLLBACK;")" -v "orphans_to=${ORPHANS_TO}"
+    run_sql "$trial" -v "orphans_to=${ORPHANS_TO}"
     note "dry-run: rollback was rolled back and invitations were not revoked"
   fi
   lock_note
@@ -747,6 +878,7 @@ mode_cleanup() {
     return
   fi
   if (( APPLY )); then
+    confirm_database_write
     run_sql "DROP SCHEMA IF EXISTS clerk_migration CASCADE;"
     target=$(realpath "$WORKDIR")
     [[ "$target" != "/" && "$target" != "$HOME" ]] || die "refusing to delete this directory"

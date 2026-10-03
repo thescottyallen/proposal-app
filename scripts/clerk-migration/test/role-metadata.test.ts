@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { planDemote, planRestore, roleOnlyPatch } from "../lib/role-metadata.ts";
+import { exportedMetadata, planDemote, planRestore, roleOnlyPatch } from "../lib/role-metadata.ts";
 
 describe("role merge", () => {
   it("merges only the role key and removes it when the export had no role", () => {
@@ -33,5 +33,12 @@ describe("role merge", () => {
       { userId: "user_other", body: roleOnlyPatch("member") },
     ]);
     assert.deepEqual(changes[0].body, { public_metadata: { role: "member" } });
+  });
+
+  it("stops when public_metadata in the export cannot be read", () => {
+    assert.throws(() => exportedMetadata("{"), /could not be read/);
+    assert.throws(() => exportedMetadata("[]"), /could not be read/);
+    assert.deepEqual(exportedMetadata(""), {});
+    assert.deepEqual(exportedMetadata('{"theme":"dark"}'), { theme: "dark" });
   });
 });

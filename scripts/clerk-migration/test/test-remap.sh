@@ -33,6 +33,15 @@ reset_db() {
     -c "DO \$\$BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END\$\$" \
     -c "GRANT USAGE ON SCHEMA public TO anon, authenticated"
   for f in "$REPO"/prisma/migrations/*/migration.sql; do P -f "$f" >/dev/null; done
+  # What Prisma records when it applies migrations
+  P -c "CREATE TABLE _prisma_migrations (id varchar(36) PRIMARY KEY, checksum varchar(64) NOT NULL,
+          finished_at timestamptz, migration_name varchar(255) NOT NULL, logs text, rolled_back_at timestamptz,
+          started_at timestamptz NOT NULL DEFAULT now(), applied_steps_count int NOT NULL DEFAULT 0)"
+  for d in "$REPO"/prisma/migrations/*/; do
+    n=$(basename "$d")
+    P -c "INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, applied_steps_count)
+            VALUES (md5('${n}'), 'x', now(), '${n}', 1)"
+  done
   cd "$WORK"
   printf 'id,email\nuser_devA,a@x.com\nuser_devB,b@x.com\n' > dev_users.csv
   printf 'id,email,external_id,created_at\nuser_prodA,A@x.com,user_devA,2026-10-01\nuser_prodB,b@x.com,user_devB,2026-10-01\n' > prod_users.csv
@@ -75,7 +84,6 @@ P -c "BEGIN" -c "SELECT clerk_migration.remap('forward')" -c "ROLLBACK" >/dev/nu
 expect_eq "dry-run changes nothing" "$(real_row)" "$(printf 'user_devA:The Product Bus:42\nuser_prodA::0')"
 fwd
 expect_eq "empty new-ID row dropped, real row moved" "$(real_row)" "user_prodA:The Product Bus:42"
-expect_eq "business_settings duplicate keeps the non-default row" "$(real_row)" "user_prodA:The Product Bus:42"
 expect_eq "clients remapped" "$(Q -c "SELECT string_agg(created_by, ',' ORDER BY id) FROM clients")" "user_prodA,user_prodB"
 expect_eq "editedBy remapped" "$(Q -c "SELECT metadata->>'editedBy' FROM proposal_events WHERE id='e1'")" "user_prodB"
 expect_eq "counts recorded (8 columns x before/after)" "$(Q -c "SELECT count(*) FROM clerk_migration.row_counts")" "16"
@@ -131,5 +139,36 @@ wait
 echo "== schema drift"
 P -c "ALTER TABLE business_settings ADD COLUMN logo_url text" >/dev/null
 expect_fail "new settings column stops the remap" P -c "SELECT clerk_migration.remap('forward')"
+set +e
+drift_out=$(P -c "SELECT clerk_migration.remap('forward')" 2>&1)
+set -e
+drift_count=$(printf '%s\n' "$drift_out" | grep -c 're-check the user-ID column list' || true)
+expect_eq "drift error says to re-check the user-ID column list" "$drift_count" "1"
+P -c "ALTER TABLE business_settings DROP COLUMN logo_url" >/dev/null
+if P -c "SELECT clerk_migration.remap('forward')" >/dev/null 2>&1; then
+  ok "remap runs again once the column is gone"
+else
+  bad "remap runs again once the column is gone"
+fi
+
+echo "== Prisma migration guard"
+reset_db; seed
+P -c "INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name) VALUES ('n1','x',now(),'20261101000000_new_thing')"
+expect_fail "newer applied migration stops the remap" P -c "SELECT clerk_migration.remap('forward')"
+set +e
+mig_out=$(P -c "SELECT clerk_migration.remap('forward')" 2>&1)
+set -e
+mig_count=$(printf '%s\n' "$mig_out" | grep -c 're-check the user-ID column list' || true)
+expect_eq "error says to re-check the user-ID column list" "$mig_count" "1"
+P -c "UPDATE _prisma_migrations SET rolled_back_at = now() WHERE id = 'n1'"
+if P -c "SELECT clerk_migration.check_schema()" >/dev/null 2>&1; then
+  ok "rolled-back migration is ignored"
+else
+  bad "rolled-back migration is ignored"
+fi
+P -c "INSERT INTO _prisma_migrations (id, checksum, migration_name) VALUES ('n2','x','20261102000000_half_done')"
+expect_fail "unfinished migration stops the remap" P -c "SELECT clerk_migration.check_schema()"
+P -c "DROP TABLE _prisma_migrations"
+expect_fail "missing _prisma_migrations stops the remap" P -c "SELECT clerk_migration.check_schema()"
 
 echo; echo "$PASS passed, $FAIL failed"; [ "$FAIL" -eq 0 ]

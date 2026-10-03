@@ -34,4 +34,8 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Preview deploys
+
+Preview builds fail without Clerk development keys (`pk_test_` and `sk_test_`) and a `DATABASE_URL`. Set `PRODUCTION_DB_HOST` to the production database host or Supabase project ref. That value is not a secret and is not a connection string. The host parsed from `DATABASE_URL` must be different. Details are in `SETUP.md`.
 # proposal-app

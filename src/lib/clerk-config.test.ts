@@ -57,8 +57,8 @@ describe("preview deployment", () => {
       VERCEL_ENV: "preview",
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_preview",
       CLERK_SECRET_KEY: "sk_test_preview",
-      DATABASE_URL: "postgresql://preview.internal/app",
-      PRODUCTION_DATABASE_URL: "postgresql://prod.internal/app",
+      DATABASE_URL: "postgresql://user:secret@db.previewref.supabase.co:5432/postgres",
+      PRODUCTION_DB_HOST: "prodref",
     };
     assert.doesNotThrow(() => assertPreviewConfig(preview));
     assert.throws(
@@ -71,10 +71,22 @@ describe("preview deployment", () => {
       /development keys/
     );
     assert.throws(
+      () => assertPreviewConfig({ ...preview, DATABASE_URL: "" }),
+      /non-production database/
+    );
+    assert.throws(
       () =>
         assertPreviewConfig({
           ...preview,
-          DATABASE_URL: preview.PRODUCTION_DATABASE_URL,
+          DATABASE_URL: "postgresql://user:secret@db.prodref.supabase.co:5432/postgres",
+        }),
+      /non-production database/
+    );
+    assert.throws(
+      () =>
+        assertPreviewConfig({
+          ...preview,
+          PRODUCTION_DB_HOST: "db.previewref.supabase.co",
         }),
       /non-production database/
     );
