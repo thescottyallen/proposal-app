@@ -160,13 +160,18 @@ export function ButtonBlockEditor({
             </div>
 
             {linkType === "url" ? (
-              <input
-                type="url"
-                value={buttonWebAddress(block)}
-                onChange={(e) => setWebAddress(e.target.value)}
-                placeholder="https://example.com"
-                className="mt-2 w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <>
+                <input
+                  type="url"
+                  value={buttonWebAddress(block)}
+                  onChange={(e) => setWebAddress(e.target.value)}
+                  placeholder="https://example.com"
+                  className="mt-2 w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {/^http:\/\//i.test(buttonWebAddress(block).trim()) && (
+                  <p className="mt-1 text-xs text-amber-700">This link will open with https.</p>
+                )}
+              </>
             ) : (
               <div className="mt-2">
                 <button

@@ -2,13 +2,19 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   ACCEPTED_STATUS_MESSAGE,
+  INVALID_STATUS_MESSAGE,
+  STATUS_SET_ON_ACCEPT_MESSAGE,
+  acceptedFieldChange,
   acceptedStatusChange,
   buildRevisionSnapshot,
   conflictMessage,
+  contentWriteResult,
+  contentWriteWhere,
   evaluateProposalPatch,
   nextRevisionVersion,
   shouldOfferLocalRestore,
   summarizeProposalContent,
+  type AcceptedFieldSnapshot,
   type EditorBackup,
   type RevisionSource,
 } from "./proposal-save.ts";
@@ -142,7 +148,7 @@ describe("revision on draft save", () => {
   });
 
   it("keeps an accepted proposal accepted", () => {
-    for (const next of ["DRAFT", "SENT", "VIEWED", "LOST", "EXPIRED", ""]) {
+    for (const next of ["DRAFT", "SENT", "VIEWED", "LOST", "EXPIRED"]) {
       const decision = acceptedStatusChange("ACCEPTED", next);
       assert.equal(decision.ok, false);
       if (decision.ok) continue;
@@ -154,6 +160,115 @@ describe("revision on draft save", () => {
     assert.equal(acceptedStatusChange("ACCEPTED", undefined).ok, true);
     assert.equal(acceptedStatusChange("SENT", "DRAFT").ok, true);
     assert.equal(acceptedStatusChange("LOST", "DRAFT").ok, true);
+    const setAccepted = acceptedStatusChange("SENT", "ACCEPTED");
+    assert.equal(setAccepted.ok, false);
+    if (!setAccepted.ok) {
+      assert.equal(setAccepted.status, 409);
+      assert.equal(setAccepted.error, STATUS_SET_ON_ACCEPT_MESSAGE);
+    }
+  });
+
+  it("returns 400 for a status the save route does not recognise", () => {
+    for (const next of ["", "PUBLISHED", "accepted", null, 1]) {
+      const decision = acceptedStatusChange("SENT", next);
+      assert.equal(decision.ok, false);
+      if (decision.ok) continue;
+      assert.equal(decision.status, 400);
+      assert.equal(decision.error, INVALID_STATUS_MESSAGE);
+    }
+  });
+
+  it("refuses content, pricing, and expiry edits once a proposal is accepted", () => {
+    const existing: AcceptedFieldSnapshot = {
+      title: "Website rebuild",
+      clientName: "Acme",
+      clientEmail: "ada@acme.com",
+      clientAbn: null,
+      content: { version: 2, pages: [] },
+      pricingData: { items: [{ id: "line-1", unitPrice: 100 }] },
+      expiresAt: "2026-12-01T00:00:00.000Z",
+      internalNotes: null,
+      lostReason: null,
+    };
+
+    for (const patch of [
+      { content: { version: 2, pages: [{ id: "page-1" }] } },
+      { pricingData: { items: [{ id: "line-1", unitPrice: 999 }] } },
+      { pricingSettings: { currency: "USD" } },
+      { expiresAt: "2027-01-15" },
+      { title: "Renamed" },
+      { clientName: "Other" },
+      { clientEmail: "other@acme.com" },
+      { clientAbn: "12 345 678 901" },
+    ]) {
+      const decision = acceptedFieldChange({
+        currentStatus: "ACCEPTED",
+        existing,
+        ...patch,
+      });
+      assert.equal(decision.ok, false);
+      if (decision.ok) continue;
+      assert.equal(decision.status, 409);
+      assert.equal(decision.error, ACCEPTED_STATUS_MESSAGE);
+    }
+
+    const notes = acceptedFieldChange({
+      currentStatus: "ACCEPTED",
+      existing,
+      title: existing.title,
+      clientName: existing.clientName,
+      clientEmail: existing.clientEmail,
+      clientAbn: "",
+      content: existing.content,
+      expiresAt: "2026-12-01",
+      internalNotes: "Call them Tuesday",
+      lostReason: "Kept for the file",
+    });
+    assert.deepEqual(notes, { ok: true, internalOnly: true });
+
+    const open = acceptedFieldChange({
+      currentStatus: "SENT",
+      existing,
+      content: { version: 2, pages: [{ id: "page-1" }] },
+      expiresAt: "2027-01-15",
+    });
+    assert.deepEqual(open, { ok: true, internalOnly: false });
+  });
+
+  it("blocks restoring a previous version of an accepted proposal", () => {
+    const existing: AcceptedFieldSnapshot = {
+      title: "Website rebuild",
+      clientName: "Acme",
+      clientEmail: "ada@acme.com",
+      clientAbn: null,
+      content: previous.content,
+      pricingData: null,
+      expiresAt: null,
+      internalNotes: null,
+      lostReason: null,
+    };
+    const decision = acceptedFieldChange({
+      currentStatus: "ACCEPTED",
+      existing,
+      content: previous.content,
+      restoring: true,
+    });
+    assert.equal(decision.ok, false);
+    if (!decision.ok) assert.equal(decision.status, 409);
+  });
+
+  it("treats a content write that matches no row as accepted in the meantime", () => {
+    assert.deepEqual(contentWriteWhere("prop_1"), {
+      id: "prop_1",
+      status: { not: "ACCEPTED" },
+    });
+    const missed = contentWriteResult(0);
+    assert.equal(missed.ok, false);
+    if (!missed.ok) {
+      assert.equal(missed.status, 409);
+      assert.equal(missed.error, ACCEPTED_STATUS_MESSAGE);
+    }
+    assert.deepEqual(contentWriteResult(1), { ok: true });
   });
 
   it("does not write a revision for a status change with no content", () => {

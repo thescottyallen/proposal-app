@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { publicButtonHref, publicProposalPayload, type PublicProposalInput } from "./public-proposal.ts";
+import {
+  linkedImageHref,
+  publicButtonHref,
+  publicProposalPayload,
+  sanitiseProposalContent,
+  type PublicProposalInput,
+} from "./public-proposal.ts";
 
 function keysDeep(value: unknown, found: string[] = []): string[] {
   if (Array.isArray(value)) {
@@ -184,7 +190,9 @@ describe("public proposal payload", () => {
     assert.equal(publicButtonHref("tel:+61390000000"), "tel:+61390000000");
     assert.equal(publicButtonHref(" example.com/a "), "https://example.com/a");
     assert.equal(publicButtonHref("javascript:alert(1)"), null);
-    assert.equal(publicButtonHref("http://example.com"), null);
+    assert.equal(publicButtonHref("http://example.com"), "https://example.com");
+    assert.equal(publicButtonHref("HTTP://example.com/a"), "https://example.com/a");
+    assert.equal(publicButtonHref("http://"), null);
     assert.equal(publicButtonHref("data:text/html,hi"), null);
 
     const payload = publicProposalPayload({
@@ -212,6 +220,14 @@ describe("public proposal payload", () => {
                 href: "mailto:ada@example.com",
                 targetPageId: "mailto:ada@example.com",
               },
+              {
+                type: "button",
+                id: "web",
+                label: "Site",
+                linkType: "url",
+                href: "http://example.com/pricing",
+                targetPageId: "http://example.com/pricing",
+              },
             ],
           },
         ],
@@ -219,6 +235,50 @@ describe("public proposal payload", () => {
     } as PublicProposalInput);
     const serialised = JSON.stringify(payload);
     assert.equal(serialised.includes("javascript:"), false);
+    assert.equal(serialised.includes("http://"), false);
     assert.match(serialised, /mailto:ada@example.com/);
+    assert.match(serialised, /https:\/\/example.com\/pricing/);
+  });
+
+  it("drops a javascript link on a linked image in the page, the editor, and stored content", () => {
+    const image = {
+      type: "image",
+      attrs: {
+        src: "https://cdn.example/photo.png",
+        alt: "Photo",
+        href: "javascript:alert(1)",
+      },
+    };
+    const content = {
+      version: 2,
+      pages: [
+        {
+          id: "page-1",
+          name: "Start",
+          blocks: [{ type: "richText", id: "rt", content: { type: "doc", content: [image] } }],
+        },
+      ],
+    };
+
+    const payload = publicProposalPayload({ ...base, content } as PublicProposalInput);
+    const serialised = JSON.stringify(payload);
+    assert.equal(serialised.includes("javascript:"), false);
+    assert.equal(serialised.includes("cdn.example/photo.png"), true);
+
+    assert.equal(linkedImageHref("javascript:alert(1)"), null);
+    assert.equal(linkedImageHref("https://example.com/photo"), "https://example.com/photo");
+    assert.equal(linkedImageHref("http://example.com/photo"), "https://example.com/photo");
+
+    const stored = sanitiseProposalContent(content);
+    assert.equal(JSON.stringify(stored).includes("javascript:"), false);
+    const again = sanitiseProposalContent(stored);
+    assert.equal(again, stored);
+
+    const httpImage = {
+      type: "image",
+      attrs: { src: "https://cdn.example/photo.png", href: "http://example.com/photo" },
+    };
+    const upgraded = sanitiseProposalContent(httpImage) as { attrs: { href?: string } };
+    assert.equal(upgraded.attrs.href, "https://example.com/photo");
   });
 });

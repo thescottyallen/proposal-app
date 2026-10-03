@@ -119,27 +119,145 @@ export function savedStatusLabel(savedAt: Date | string): string {
   return `Saved at ${formatClockTime(savedAt)}`;
 }
 
+export const PROPOSAL_STATUSES = ["DRAFT", "SENT", "VIEWED", "ACCEPTED", "LOST", "EXPIRED"] as const;
+
+export type ProposalStatusName = (typeof PROPOSAL_STATUSES)[number];
+
+export const ACCEPTED_STATUS_MESSAGE =
+  "This proposal has been accepted. Duplicate it to make a new copy.";
+
+export const STATUS_SET_ON_ACCEPT_MESSAGE =
+  "A proposal is marked accepted when the client accepts it.";
+
+export const INVALID_STATUS_MESSAGE =
+  "Status must be draft, sent, viewed, lost, or expired.";
+
+export type StatusDecision =
+  | { ok: true; nextStatus?: ProposalStatusName }
+  | { ok: false; status: 400 | 409; error: string };
+
+function isProposalStatus(value: string): value is ProposalStatusName {
+  return (PROPOSAL_STATUSES as readonly string[]).includes(value);
+}
+
+/**
+ * Status written by the save route. Accepted is set only when the client accepts.
+ * An accepted proposal cannot move to any other status.
+ */
+export function acceptedStatusChange(
+  currentStatus: string,
+  nextStatus: unknown
+): StatusDecision {
+  if (nextStatus === undefined) return { ok: true };
+  if (typeof nextStatus !== "string" || !isProposalStatus(nextStatus)) {
+    return { ok: false, status: 400, error: INVALID_STATUS_MESSAGE };
+  }
+  if (nextStatus === "ACCEPTED" && currentStatus !== "ACCEPTED") {
+    return { ok: false, status: 409, error: STATUS_SET_ON_ACCEPT_MESSAGE };
+  }
+  if (currentStatus === "ACCEPTED" && nextStatus !== "ACCEPTED") {
+    return { ok: false, status: 409, error: ACCEPTED_STATUS_MESSAGE };
+  }
+  return { ok: true, nextStatus };
+}
+
+export interface AcceptedFieldSnapshot {
+  title: string;
+  clientName: string;
+  clientEmail: string;
+  clientAbn: string | null;
+  content: unknown;
+  pricingData: unknown;
+  expiresAt: Date | string | null;
+  internalNotes: string | null;
+  lostReason: string | null;
+}
+
+export interface AcceptedFieldPatch {
+  currentStatus: string;
+  existing: AcceptedFieldSnapshot;
+  title?: string;
+  clientName?: string;
+  clientEmail?: string;
+  clientAbn?: string | null;
+  content?: unknown;
+  pricingData?: unknown;
+  pricingSettings?: unknown;
+  expiresAt?: string | null;
+  internalNotes?: string | null;
+  lostReason?: string | null;
+  /** True when this save is putting a previous version back. */
+  restoring?: boolean;
+}
+
+export type FieldDecision =
+  | { ok: true; internalOnly: boolean }
+  | { ok: false; status: 409; error: string };
+
+function sameText(left: string | null | undefined, right: string | null | undefined): boolean {
+  const normalise = (value: string | null | undefined) => {
+    if (value == null) return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  };
+  return normalise(left) === normalise(right);
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function sameExpiry(existing: Date | string | null | undefined, incoming: string | null): boolean {
+  if (!incoming) return existing == null || existing === "";
+  const current = existing instanceof Date
+    ? existing.toISOString()
+    : typeof existing === "string"
+      ? existing
+      : "";
+  if (!current) return false;
+  return current.slice(0, 10) === incoming.slice(0, 10);
+}
+
+/**
+ * An accepted proposal can still store internal notes and a lost reason.
+ * Title, client details, content, pricing, expiry, and a restored version cannot change.
+ */
+export function acceptedFieldChange(input: AcceptedFieldPatch): FieldDecision {
+  if (input.currentStatus !== "ACCEPTED") return { ok: true, internalOnly: false };
+
+  const locked =
+    (input.title !== undefined && input.title !== input.existing.title) ||
+    (input.clientName !== undefined && input.clientName !== input.existing.clientName) ||
+    (input.clientEmail !== undefined && input.clientEmail !== input.existing.clientEmail) ||
+    (input.clientAbn !== undefined && !sameText(input.clientAbn, input.existing.clientAbn)) ||
+    (input.content !== undefined && !sameJson(input.content, input.existing.content)) ||
+    (input.pricingData !== undefined && !sameJson(input.pricingData, input.existing.pricingData)) ||
+    (input.pricingSettings !== undefined) ||
+    (input.expiresAt !== undefined && !sameExpiry(input.existing.expiresAt, input.expiresAt)) ||
+    input.restoring === true;
+
+  if (locked) return { ok: false, status: 409, error: ACCEPTED_STATUS_MESSAGE };
+  return { ok: true, internalOnly: true };
+}
+
+/** Content and pricing writes only match a proposal that is not accepted yet. */
+export function contentWriteWhere(id: string) {
+  return { id, status: { not: "ACCEPTED" as const } };
+}
+
+/** A missed content write means the proposal was accepted in the meantime. */
+export function contentWriteResult(count: number):
+  | { ok: true }
+  | { ok: false; status: 409; error: string } {
+  if (count === 1) return { ok: true };
+  return { ok: false, status: 409, error: ACCEPTED_STATUS_MESSAGE };
+}
+
 /**
  * Decide whether a PATCH may write, and whether the previous content must be
  * stored first. A content write always keeps a revision, including drafts.
  * Status-only updates (lost, reopen) do not.
  */
-export const ACCEPTED_STATUS_MESSAGE =
-  "This proposal has been accepted. Duplicate it to make a new copy.";
-
-/**
- * An accepted proposal stays accepted. Content can still be saved.
- * Any other status, including draft or sent, is refused.
- */
-export function acceptedStatusChange(
-  currentStatus: string,
-  nextStatus: unknown
-): { ok: true } | { ok: false; status: 409; error: string } {
-  if (currentStatus !== "ACCEPTED") return { ok: true };
-  if (nextStatus === undefined || nextStatus === "ACCEPTED") return { ok: true };
-  return { ok: false, status: 409, error: ACCEPTED_STATUS_MESSAGE };
-}
-
 export function evaluateProposalPatch(input: PatchInput): PatchDecision {
   const serverUpdatedAt = toIso(input.serverUpdatedAt) ?? new Date(0).toISOString();
 

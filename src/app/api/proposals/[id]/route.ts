@@ -9,12 +9,15 @@ import {
   getAllPricingBlocks,
   ProposalDocument,
 } from "@/lib/proposal-document";
-import { publicProposalPayload, type PublicProposalInput } from "@/lib/public-proposal";
+import { publicProposalPayload, sanitiseProposalContent, type PublicProposalInput } from "@/lib/public-proposal";
 import type { ProposalPricingSettings } from "@/lib/pricing-types";
 import {
   ACCEPTED_STATUS_MESSAGE,
+  acceptedFieldChange,
   acceptedStatusChange,
   buildRevisionSnapshot,
+  contentWriteResult,
+  contentWriteWhere,
   evaluateProposalPatch,
   nextRevisionVersion,
 } from "@/lib/proposal-save";
@@ -46,6 +49,8 @@ interface ProposalPatchBody {
   pricingSettings?: ProposalPricingSettings;
   baseUpdatedAt?: string | null;
   force?: boolean;
+  /** True when this save is putting a previous version back. */
+  restoring?: boolean;
 }
 
 function readProposalPatch(value: unknown): ProposalPatchBody {
@@ -105,6 +110,7 @@ export async function PATCH(
     pricingSettings: legacyPricingSettings,
     baseUpdatedAt,
     force,
+    restoring,
   } = record;
 
   const statusDecision = acceptedStatusChange(existing.status, status);
@@ -114,7 +120,44 @@ export async function PATCH(
       { status: statusDecision.status }
     );
   }
-  const changingStatus = status !== undefined && status !== existing.status;
+  const nextStatus = statusDecision.nextStatus;
+  const changingStatus = nextStatus !== undefined && nextStatus !== existing.status;
+
+  // An accepted proposal keeps its title, client, content, pricing, and expiry.
+  // Internal notes and a lost reason can still be stored. Restoring a version
+  // is a content write, so it is refused here as well.
+  const fieldDecision = acceptedFieldChange({
+    currentStatus: existing.status,
+    existing: {
+      title: existing.title,
+      clientName: existing.clientName,
+      clientEmail: existing.clientEmail,
+      clientAbn: existing.clientAbn,
+      content: existing.content,
+      pricingData: existing.pricingData,
+      expiresAt: existing.expiresAt,
+      internalNotes: existing.internalNotes,
+      lostReason: existing.lostReason,
+    },
+    title,
+    clientName,
+    clientEmail,
+    clientAbn,
+    content,
+    pricingData: legacyPricingData,
+    pricingSettings: legacyPricingSettings,
+    expiresAt,
+    internalNotes,
+    lostReason,
+    restoring: restoring === true,
+  });
+  if (!fieldDecision.ok) {
+    return NextResponse.json({ error: fieldDecision.error }, { status: fieldDecision.status });
+  }
+
+  const safeContent = content === undefined
+    ? undefined
+    : sanitiseProposalContent(content) as Prisma.InputJsonValue;
 
   // Compute totalValue and first pricing settings from the content
   let totalValue: number | undefined;
@@ -131,76 +174,107 @@ export async function PATCH(
     ps = legacyPricingSettings as ProposalPricingSettings;
   }
 
-  // Content writes (drafts included) keep the previous content first, then update.
-  // Sent, viewed, and accepted proposals still snapshot the same way.
-  // A stale editor gets 409 unless the user chooses to save over the newer copy.
-  const decision = evaluateProposalPatch({
-    serverUpdatedAt: existing.updatedAt,
-    baseUpdatedAt: typeof baseUpdatedAt === "string" ? baseUpdatedAt : null,
-    force: force === true,
-    writesContent: content !== undefined || Boolean(legacyPricingData),
-  });
-  if (!decision.ok) {
-    return NextResponse.json(decision.body, { status: decision.status });
-  }
+  const writesClientFields = !fieldDecision.internalOnly && (
+    title !== undefined ||
+    clientName !== undefined ||
+    clientEmail !== undefined ||
+    clientAbn !== undefined ||
+    content !== undefined ||
+    legacyPricingData !== undefined ||
+    legacyPricingSettings !== undefined ||
+    expiresAt !== undefined
+  );
 
-  if (decision.writeRevision) {
-    try {
-      const lastRevision = await prisma.proposalRevision.findFirst({
-        where:   { proposalId: id },
-        orderBy: { version: "desc" },
-        select:  { version: true },
-      });
-      await prisma.proposalRevision.create({
-        data: {
-          proposalId: id,
-          version:    nextRevisionVersion(lastRevision?.version),
-          createdBy:  ctx.userId,
-          snapshot:   buildRevisionSnapshot(existing) as unknown as Prisma.InputJsonValue,
-        },
-      });
-    } catch (err) {
-      // Another save took this version number. Treat it as a conflict so the
-      // editor can reload instead of overwriting.
-      if ((err as { code?: string }).code === "P2002") {
-        return NextResponse.json(
-          {
-            error: "This proposal was changed in another tab or by someone else.",
-            code: "conflict",
-            updatedAt: existing.updatedAt.toISOString(),
+  // Content writes (drafts included) keep the previous content first, then update.
+  // A stale editor gets 409 unless the user chooses to save over the newer copy.
+  // Notes on an accepted proposal do not replace the content the client agreed to.
+  if (!fieldDecision.internalOnly) {
+    const decision = evaluateProposalPatch({
+      serverUpdatedAt: existing.updatedAt,
+      baseUpdatedAt: typeof baseUpdatedAt === "string" ? baseUpdatedAt : null,
+      force: force === true,
+      writesContent: writesClientFields,
+    });
+    if (!decision.ok) {
+      return NextResponse.json(decision.body, { status: decision.status });
+    }
+
+    if (decision.writeRevision) {
+      try {
+        const lastRevision = await prisma.proposalRevision.findFirst({
+          where:   { proposalId: id },
+          orderBy: { version: "desc" },
+          select:  { version: true },
+        });
+        await prisma.proposalRevision.create({
+          data: {
+            proposalId: id,
+            version:    nextRevisionVersion(lastRevision?.version),
+            createdBy:  ctx.userId,
+            snapshot:   buildRevisionSnapshot(existing) as unknown as Prisma.InputJsonValue,
           },
-          { status: 409 }
-        );
+        });
+      } catch (err) {
+        // Another save took this version number. Treat it as a conflict so the
+        // editor can reload instead of overwriting.
+        if ((err as { code?: string }).code === "P2002") {
+          return NextResponse.json(
+            {
+              error: "This proposal was changed in another tab or by someone else.",
+              code: "conflict",
+              updatedAt: existing.updatedAt.toISOString(),
+            },
+            { status: 409 }
+          );
+        }
+        throw err;
       }
-      throw err;
     }
   }
 
   const written = await prisma.proposal.updateMany({
-    where: changingStatus ? { id, status: existing.status } : { id },
-    data: {
-      ...(title         !== undefined && { title }),
-      ...(clientName    !== undefined && { clientName }),
-      ...(clientEmail   !== undefined && { clientEmail }),
-      ...(clientAbn     !== undefined && { clientAbn }),
-      ...(content       !== undefined && { content }),
-      ...(changingStatus && { status: status as typeof existing.status }),
-      ...(totalValue    !== undefined && { totalValue }),
-      ...(expiresAt     !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null }),
-      ...(internalNotes !== undefined && { internalNotes }),
-      ...(lostReason    !== undefined && { lostReason }),
-      // Update flat currency column from first pricing block (for reporting)
-      ...(ps && {
-        currency:    ps.currency,
-        exchangeRate: ps.exchangeRate,
-        gstEnabled:  ps.gstEnabled,
-        roundingMode: ps.roundingMode,
-        paymentTerms: ps.paymentTerms,
-        billingCadence: ps.billingCadence,
-      }),
-    },
+    where: fieldDecision.internalOnly
+      ? { id }
+      : writesClientFields
+        ? contentWriteWhere(id)
+        : changingStatus
+          ? { id, status: existing.status }
+          : { id },
+    data: fieldDecision.internalOnly
+      ? {
+          ...(internalNotes !== undefined && { internalNotes }),
+          ...(lostReason !== undefined && { lostReason }),
+        }
+      : {
+          ...(title         !== undefined && { title }),
+          ...(clientName    !== undefined && { clientName }),
+          ...(clientEmail   !== undefined && { clientEmail }),
+          ...(clientAbn     !== undefined && { clientAbn }),
+          ...(safeContent   !== undefined && { content: safeContent }),
+          ...(changingStatus && nextStatus && { status: nextStatus }),
+          ...(totalValue    !== undefined && { totalValue }),
+          ...(expiresAt     !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null }),
+          ...(internalNotes !== undefined && { internalNotes }),
+          ...(lostReason    !== undefined && { lostReason }),
+          // Update flat currency column from first pricing block (for reporting)
+          ...(ps && {
+            currency:    ps.currency,
+            exchangeRate: ps.exchangeRate,
+            gstEnabled:  ps.gstEnabled,
+            roundingMode: ps.roundingMode,
+            paymentTerms: ps.paymentTerms,
+            billingCadence: ps.billingCadence,
+          }),
+        },
   });
   if (written.count !== 1) {
+    if (writesClientFields) {
+      const blocked = contentWriteResult(written.count);
+      return NextResponse.json(
+        { error: blocked.ok ? ACCEPTED_STATUS_MESSAGE : blocked.error },
+        { status: 409 }
+      );
+    }
     const current = await prisma.proposal.findUnique({
       where: { id },
       select: { status: true, updatedAt: true },
@@ -238,9 +312,9 @@ export async function PATCH(
     const oldExp = existing.expiresAt ? existing.expiresAt.toISOString() : null;
     if (newExp !== oldExp) changedFields.push("Expiry date");
   }
-  if (content !== undefined && JSON.stringify(content) !== JSON.stringify(existing.content)) {
+  if (!fieldDecision.internalOnly && safeContent !== undefined && JSON.stringify(safeContent) !== JSON.stringify(existing.content)) {
     changedFields.push("Proposal content");
-  } else if (legacyPricingData) {
+  } else if (!fieldDecision.internalOnly && legacyPricingData) {
     changedFields.push("Pricing");
   }
 

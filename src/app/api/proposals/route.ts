@@ -13,6 +13,7 @@ import {
 } from "@/lib/pricing-types";
 import { getAuthContext } from "@/lib/roles.server";
 import { listAccessibleProposals } from "@/lib/proposal-list";
+import { sanitiseProposalContent } from "@/lib/public-proposal";
 
 // ─── GET /api/proposals ───────────────────────────────────────────────────────
 
@@ -79,6 +80,8 @@ export async function POST(request: NextRequest) {
     // Brand new blank proposal
     resolvedContent = defaultDocument(defaultSettings) as unknown as Record<string, unknown>;
   }
+
+  resolvedContent = sanitiseProposalContent(resolvedContent) as Record<string, unknown>;
 
   const proposal = await prisma.proposal.create({
     select: { id: true },
