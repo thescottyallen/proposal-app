@@ -3,6 +3,7 @@ import { auth, clerkClient } from "@clerk/nextjs/server";
 import { notFound } from "next/navigation";
 import { PublicProposalView } from "./PublicProposalView";
 import { sendOpenNotification } from "@/lib/email";
+import { parseAgreedSummary } from "@/lib/agreed-summary";
 import { isProposalDocument } from "@/lib/proposal-document";
 import { pricingDataForClient } from "@/lib/proposal-detail";
 
@@ -125,6 +126,20 @@ export default async function PublicProposalPage({ params }: Props) {
     select: { businessName: true, abn: true },
   });
 
+  // The acceptance event keeps what was agreed, even if the proposal is edited later.
+  let agreedSummary = null;
+  if (proposal.status === "ACCEPTED") {
+    const acceptedEvent = await prisma.proposalEvent.findFirst({
+      where: { proposalId: proposal.id, eventType: "accepted" },
+      orderBy: { createdAt: "desc" },
+    });
+    const metadata = acceptedEvent?.metadata;
+    const stored = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as { agreed?: unknown }).agreed
+      : null;
+    agreedSummary = parseAgreedSummary(stored);
+  }
+
   return (
     <PublicProposalView
       proposal={{
@@ -160,6 +175,7 @@ export default async function PublicProposalPage({ params }: Props) {
         businessName: bizSettings?.businessName ?? "",
         abn:          bizSettings?.abn ?? null,
       }}
+      agreedSummary={agreedSummary}
     />
   );
 }

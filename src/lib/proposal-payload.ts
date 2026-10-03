@@ -36,6 +36,54 @@ export const EDITOR_EVENT_SELECT = {
   metadata: true,
 } as const;
 
+/**
+ * Editor document query. Content stays, because payment options (including the
+ * project fee) are stored there. pricingData is a second read for legacy rows only.
+ * Event metadata stays whole so paymentChoices and the agreed summary survive.
+ */
+export const EDITOR_PROPOSAL_SELECT = {
+  id: true,
+  title: true,
+  clientName: true,
+  clientEmail: true,
+  clientAbn: true,
+  content: true,
+  status: true,
+  publicId: true,
+  totalValue: true,
+  invoiceNumber: true,
+  internalNotes: true,
+  lostReason: true,
+  expiresAt: true,
+  currency: true,
+  exchangeRate: true,
+  gstEnabled: true,
+  roundingMode: true,
+  discountType: true,
+  discountValue: true,
+  showDiscount: true,
+  depositType: true,
+  depositValue: true,
+  billingCadence: true,
+  recurringStartMode: true,
+  recurringStartDate: true,
+  fixedTermMonths: true,
+  paymentTerms: true,
+  latePaymentClause: true,
+  createdBy: true,
+  updatedAt: true,
+  events: {
+    orderBy: { createdAt: "desc" as const },
+    take: 50,
+    select: EDITOR_EVENT_SELECT,
+  },
+  revisions: {
+    orderBy: { version: "desc" as const },
+    take: 50,
+    select: EDITOR_REVISION_SELECT,
+  },
+} as const;
+
 /** v2 proposals store pricing inside content. Don't ship the legacy column too. */
 export function pricingDataForClient(
   content: unknown,

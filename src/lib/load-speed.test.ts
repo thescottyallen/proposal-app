@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { explicitRole } from "./roles.ts";
 import {
   EDITOR_EVENT_SELECT,
+  EDITOR_PROPOSAL_SELECT,
   EDITOR_REVISION_SELECT,
   PROPOSAL_LIST_SELECT,
   pricingDataForClient,
@@ -25,6 +26,14 @@ describe("list and editor payloads", () => {
     assert.equal("ipAddress" in EDITOR_EVENT_SELECT, false);
     assert.equal("userAgent" in EDITOR_EVENT_SELECT, false);
     assert.equal(EDITOR_EVENT_SELECT.metadata, true);
+  });
+
+  it("keeps the proposal document and acceptance metadata", () => {
+    // Payment options, including the project fee, live in content.
+    // The acceptance event's metadata holds paymentChoices and the agreed summary.
+    assert.equal(EDITOR_PROPOSAL_SELECT.content, true);
+    assert.equal(EDITOR_EVENT_SELECT.metadata, true);
+    assert.equal("pricingData" in EDITOR_PROPOSAL_SELECT, false);
   });
 
   it("drops the legacy pricing column once content is a v2 document", () => {

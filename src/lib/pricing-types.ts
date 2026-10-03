@@ -6,8 +6,8 @@
 export type LineItemType = "fixed" | "hourly" | "day" | "retainer" | "milestone";
 export type DiscountType = "percentage" | "fixed";
 export type DepositType  = "percentage" | "fixed";
-/** Client's choice when a pricing block offers monthly or upfront payment. */
-export type PaymentChoice = "monthly" | "upfront";
+/** Client's choice when a pricing block offers monthly, upfront, or a project fee. */
+export type PaymentChoice = "monthly" | "upfront" | "project";
 
 export interface PricingSection {
   id:    string;
@@ -108,6 +108,20 @@ export interface ProposalPricingSettings {
    */
   paymentMonthlyIncluded?: string | null;
   paymentUpfrontIncluded?: string | null;
+  /**
+   * Which choices to show. Missing monthly/upfront means they are offered,
+   * so older proposals keep both. Project fee stays off until it's set true.
+   */
+  paymentMonthlyOffered?: boolean;
+  paymentUpfrontOffered?: boolean;
+  paymentProjectOffered?: boolean;
+  /** Ex-GST project fee, split across two stages. */
+  paymentProjectFee?: number;
+  paymentProjectStage1Percent?: number;
+  paymentProjectStage2Percent?: number;
+  paymentProjectStage1Label?: string | null;
+  paymentProjectStage2Label?: string | null;
+  paymentProjectIncluded?: string | null;
   /** Chosen on the public page. Null until the client picks one. */
   selectedPaymentOption?: PaymentChoice | null;
 }

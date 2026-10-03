@@ -5,54 +5,12 @@ import { resolveClerkUsers } from "@/lib/clerk-users";
 import { getOrCreateBusinessSettings } from "@/lib/business-settings";
 import {
   EDITOR_EVENT_SELECT,
+  EDITOR_PROPOSAL_SELECT,
   EDITOR_REVISION_SELECT,
   pricingDataForClient,
 } from "@/lib/proposal-payload";
 
-export { EDITOR_EVENT_SELECT, EDITOR_REVISION_SELECT, pricingDataForClient };
-
-const EDITOR_PROPOSAL_SELECT = {
-  id: true,
-  title: true,
-  clientName: true,
-  clientEmail: true,
-  clientAbn: true,
-  content: true,
-  status: true,
-  publicId: true,
-  totalValue: true,
-  invoiceNumber: true,
-  internalNotes: true,
-  lostReason: true,
-  expiresAt: true,
-  currency: true,
-  exchangeRate: true,
-  gstEnabled: true,
-  roundingMode: true,
-  discountType: true,
-  discountValue: true,
-  showDiscount: true,
-  depositType: true,
-  depositValue: true,
-  billingCadence: true,
-  recurringStartMode: true,
-  recurringStartDate: true,
-  fixedTermMonths: true,
-  paymentTerms: true,
-  latePaymentClause: true,
-  createdBy: true,
-  updatedAt: true,
-  events: {
-    orderBy: { createdAt: "desc" as const },
-    take: 50,
-    select: EDITOR_EVENT_SELECT,
-  },
-  revisions: {
-    orderBy: { version: "desc" as const },
-    take: 50,
-    select: EDITOR_REVISION_SELECT,
-  },
-} as const;
+export { EDITOR_EVENT_SELECT, EDITOR_PROPOSAL_SELECT, EDITOR_REVISION_SELECT, pricingDataForClient };
 
 export interface EditorEventMetadata {
   editedBy?: string;

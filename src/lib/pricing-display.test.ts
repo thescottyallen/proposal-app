@@ -11,10 +11,14 @@ import {
   computePricingTotals,
   describeAcceptedPaymentChoice,
   displayedLineAmount,
+  effectivePaymentChoice,
   formatCurrency,
   monthlyOptionLabel,
+  offeredPaymentChoices,
   paymentChoiceSnapshot,
   paymentIncludedText,
+  projectOptionLabel,
+  projectStageLine,
   upfrontOptionLabel,
 } from "./utils.ts";
 import {
@@ -265,5 +269,160 @@ describe("payment options", () => {
     if (upfrontBlock.type === "pricing") {
       assert.deepEqual(upfrontBlock.pricingData.items, items);
     }
+  });
+
+  it("leaves project fee off until it's turned on", () => {
+    const settings = paymentSettings();
+    assert.deepEqual(offeredPaymentChoices(settings), ["monthly", "upfront"]);
+    assert.equal(settings.paymentProjectOffered, undefined);
+    const quote = computePaymentQuote(settings);
+    assert.equal(quote.projectFee, 0);
+    assert.equal(quote.projectPercentsValid, true);
+    assert.equal(effectivePaymentChoice(settings), null);
+  });
+});
+
+describe("project fee", () => {
+  const included = "Discovery, build, and a handover workshop";
+
+  function projectSettings(
+    overrides: Partial<ProposalPricingSettings> = {}
+  ): ProposalPricingSettings {
+    return paymentSettings({
+      paymentMonthlyOffered: false,
+      paymentUpfrontOffered: false,
+      paymentProjectOffered: true,
+      paymentProjectFee: 12000,
+      paymentProjectIncluded: included,
+      ...overrides,
+    });
+  }
+
+  it("splits the fee and shows each stage ex GST, plus GST", () => {
+    const settings = projectSettings();
+    const quote = computePaymentQuote(settings);
+    assert.equal(quote.projectFee, 12000);
+    assert.equal(quote.project.subtotal, 12000);
+    assert.equal(quote.project.gstAmount, 1200);
+    assert.equal(quote.project.total, 13200);
+    assert.deepEqual(
+      quote.projectStages.map((stage) => stage.amount),
+      [6000, 6000]
+    );
+    assert.equal(
+      projectStageLine(quote.projectStages[0], true, money),
+      "$6,000.00 + GST on commencement"
+    );
+    assert.equal(
+      projectStageLine(quote.projectStages[1], true, money),
+      "$6,000.00 + GST on completion"
+    );
+    assert.equal(
+      projectOptionLabel(quote, true, money),
+      "Project fee: $12,000.00 ($6,000.00 + GST on commencement, $6,000.00 + GST on completion)"
+    );
+  });
+
+  it("uses a custom stage label and drops GST wording when GST is off", () => {
+    const quote = computePaymentQuote(projectSettings({
+      gstEnabled: false,
+      paymentProjectStage1Label: "At kickoff",
+    }));
+    assert.equal(
+      projectStageLine(quote.projectStages[0], false, money),
+      "$6,000.00 at kickoff"
+    );
+  });
+
+  it("rejects a split that doesn't add up to 100", () => {
+    const settings = projectSettings({
+      paymentProjectStage1Percent: 40,
+      paymentProjectStage2Percent: 50,
+    });
+    const quote = computePaymentQuote(settings);
+    assert.equal(quote.projectPercentsValid, false);
+    assert.equal(paymentChoiceSnapshot(settings), null);
+    assert.equal(allPaymentChoicesResolved(docWith(settings)), false);
+    const totals = computePricingTotals({ sections: [], items: [] }, settings);
+    assert.equal(totals.hasUnresolvedOptions, true);
+    assert.equal(totals.grandTotal, 0);
+  });
+
+  it("charges a lone project fee without a separate choice, and records the stages", () => {
+    const settings = projectSettings();
+    const document = docWith(settings);
+    assert.equal(allPaymentChoicesResolved(document), true);
+    assert.equal(effectivePaymentChoice(settings), "project");
+
+    const totals = computePricingTotals({ sections: [], items: [] }, settings);
+    assert.equal(totals.subtotalAfterDiscount, 12000);
+    assert.equal(totals.gstAmount, 1200);
+    assert.equal(totals.grandTotal, 13200);
+    assert.equal(totals.hasUnresolvedOptions, false);
+
+    const stored = applyPaymentChoices(document, {});
+    const block = stored.pages[0].blocks[0];
+    assert.equal(block.type, "pricing");
+    if (block.type !== "pricing") return;
+    assert.equal(block.pricingSettings.selectedPaymentOption, "project");
+
+    const [record] = paymentAcceptanceRecords(stored);
+    assert.equal(record.option, "project");
+    assert.equal(record.projectFee, 12000);
+    assert.equal(record.subtotal, 12000);
+    assert.equal(record.gstAmount, 1200);
+    assert.equal(record.total, 13200);
+    assert.equal(record.included, included);
+    assert.deepEqual(
+      record.projectStages?.map((stage) => ({ label: stage.label, amount: stage.amount })),
+      [
+        { label: "On commencement", amount: 6000 },
+        { label: "On completion", amount: 6000 },
+      ]
+    );
+    assert.equal(
+      describeAcceptedPaymentChoice(record),
+      `${record.label} — ${included}`
+    );
+  });
+
+  it("sits beside monthly and upfront until the client picks one", () => {
+    const settings = projectSettings({
+      paymentMonthlyOffered: true,
+      paymentUpfrontOffered: true,
+      paymentUpfrontOverride: 4195,
+    });
+    assert.deepEqual(offeredPaymentChoices(settings), ["monthly", "upfront", "project"]);
+    const document = docWith(settings);
+    assert.equal(allPaymentChoicesResolved(document), false);
+    assert.equal(computePricingTotals({ sections: [], items: [] }, settings).grandTotal, 0);
+
+    const monthly = selectPaymentOption(document, "price", "monthly");
+    const monthlyBlock = monthly.pages[0].blocks[0];
+    assert.equal(monthlyBlock.type, "pricing");
+    if (monthlyBlock.type !== "pricing") return;
+    const monthlyRecord = paymentChoiceSnapshot(monthlyBlock.pricingSettings);
+    assert.equal(monthlyRecord?.option, "monthly");
+    assert.equal(monthlyRecord?.projectFee, null);
+    assert.equal(monthlyRecord?.total, 1650);
+
+    const project = selectPaymentOption(document, "price", "project");
+    const [record] = paymentAcceptanceRecords(project);
+    assert.equal(record.option, "project");
+    assert.equal(record.projectFee, 12000);
+    assert.equal(record.projectStages?.[0].amount, 6000);
+
+    assert.equal(applyPaymentChoices(document, { price: "nope" }).pages[0].blocks[0], document.pages[0].blocks[0]);
+  });
+
+  it("gives the remainder of an uneven split to the second stage", () => {
+    const quote = computePaymentQuote(projectSettings({
+      paymentProjectFee: 100,
+      paymentProjectStage1Percent: 33,
+      paymentProjectStage2Percent: 67,
+    }));
+    assert.equal(quote.projectStages[0].amount, 33);
+    assert.equal(quote.projectStages[1].amount, 67);
+    assert.equal(quote.projectStages[0].amount + quote.projectStages[1].amount, 100);
   });
 });

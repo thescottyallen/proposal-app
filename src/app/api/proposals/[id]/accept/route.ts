@@ -15,8 +15,10 @@ import {
   getAllPricingBlocks,
   paymentAcceptanceRecords,
   ProposalDocument,
+  migrateToDocument,
 } from "@/lib/proposal-document";
-import type { ProposalPricingData } from "@/lib/pricing-types";
+import { defaultPricingSettings, type ProposalPricingData, type ProposalPricingSettings } from "@/lib/pricing-types";
+import { buildAgreedSummary, type AgreedSummary } from "@/lib/agreed-summary";
 import { computePricingTotals } from "@/lib/utils";
 
 // POST /api/proposals/:id/accept — public endpoint, no auth required
@@ -73,6 +75,7 @@ export async function POST(
   let pricingDataUpdate: object | undefined;
   let totalValueUpdate: number | undefined;
   let paymentRecords: ReturnType<typeof paymentAcceptanceRecords> = [];
+  let agreedDoc: ProposalDocument | null = null;
 
   if (isProposalDocument(rawContent)) {
     // New format: update clientIncluded within the document's pricing blocks,
@@ -84,12 +87,13 @@ export async function POST(
     const updatedDoc = applyPaymentChoices(withChoices, paymentChoices ?? {});
     if (!allPaymentChoicesResolved(updatedDoc)) {
       return NextResponse.json(
-        { error: "Please choose monthly or upfront before accepting." },
+        { error: "Please choose a payment option before accepting." },
         { status: 400 }
       );
     }
     contentUpdate = updatedDoc as unknown as Record<string, unknown>;
     paymentRecords = paymentAcceptanceRecords(updatedDoc);
+    agreedDoc = updatedDoc;
     // Recompute the accepted total from the client's final choices. The figure
     // is GST-inclusive: a payment choice contributes that option's total, and
     // a choose-one block contributes the selected line, not the sum of both.
@@ -112,7 +116,22 @@ export async function POST(
         })),
       };
     }
+    const legacyPricing = (pricingDataUpdate ?? proposal.pricingData) as ProposalPricingData | null;
+    agreedDoc = migrateToDocument(
+      {},
+      legacyPricing,
+      legacyPricingSettings(proposal)
+    );
   }
+
+  const agreed: AgreedSummary = buildAgreedSummary({
+    doc: agreedDoc ?? { version: 2, pages: [] },
+    proposalTitle: proposal.title,
+    clientName: proposal.clientName,
+    acceptedAt,
+    currency: proposal.currency as ProposalPricingSettings["currency"],
+    roundingMode: proposal.roundingMode as ProposalPricingSettings["roundingMode"],
+  });
 
   await prisma.proposal.update({
     where: { id },
@@ -137,6 +156,7 @@ export async function POST(
         clientIncluded,
         clientAbn:      clientAbn?.trim() || null,
         ...(paymentRecords.length > 0 ? { paymentChoices: paymentRecords } : {}),
+        agreed,
       } as unknown as Prisma.InputJsonValue,
     },
   });
@@ -169,6 +189,7 @@ export async function POST(
       signerName,
       businessName,
       publicUrl,
+      agreed,
       customSubject:  biz?.acceptanceEmailSubject ?? undefined,
       customMessage:  biz?.acceptanceEmailMessage ?? undefined,
     });
@@ -202,7 +223,6 @@ export async function POST(
     // Resend limits sending to ~2 requests/second. The client confirmation was
     // just sent, so space out each admin notification to stay under the limit
     // (otherwise all but the first were rejected as "Too many requests").
-    const acceptedAtLabel = acceptedAt.toLocaleString("en-AU", { timeZone: "Australia/Sydney" });
     const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
     for (const email of recipients) {
       await sleep(600);
@@ -211,15 +231,50 @@ export async function POST(
         clientName:    proposal.clientName,
         signerName,
         proposalTitle: proposal.title,
-        totalValue:    totalValueUpdate ?? proposal.totalValue,
-        currency:      proposal.currency,
         proposalId:    proposal.id,
-        acceptedAt:    acceptedAtLabel,
+        agreed,
       });
     }
   } catch (err) {
     console.error("Failed to send acceptance notifications:", err);
   }
 
-  return NextResponse.json({ success: true, acceptedAt: acceptedAt.toISOString() });
+  return NextResponse.json({ success: true, acceptedAt: acceptedAt.toISOString(), agreed });
+}
+
+function legacyPricingSettings(proposal: {
+  currency: string;
+  exchangeRate: number;
+  gstEnabled: boolean;
+  roundingMode: string;
+  discountType: string | null;
+  discountValue: number | null;
+  showDiscount: boolean;
+  depositType: string | null;
+  depositValue: number | null;
+  billingCadence: string;
+  recurringStartMode: string | null;
+  recurringStartDate: Date | null;
+  fixedTermMonths: number | null;
+  paymentTerms: string;
+  latePaymentClause: string | null;
+}): ProposalPricingSettings {
+  return {
+    ...defaultPricingSettings(),
+    currency: proposal.currency as ProposalPricingSettings["currency"],
+    exchangeRate: proposal.exchangeRate,
+    gstEnabled: proposal.gstEnabled,
+    roundingMode: proposal.roundingMode as ProposalPricingSettings["roundingMode"],
+    discountType: proposal.discountType as ProposalPricingSettings["discountType"],
+    discountValue: proposal.discountValue,
+    showDiscount: proposal.showDiscount,
+    depositType: proposal.depositType as ProposalPricingSettings["depositType"],
+    depositValue: proposal.depositValue,
+    billingCadence: proposal.billingCadence as ProposalPricingSettings["billingCadence"],
+    recurringStartMode: proposal.recurringStartMode as ProposalPricingSettings["recurringStartMode"],
+    recurringStartDate: proposal.recurringStartDate?.toISOString() ?? null,
+    fixedTermMonths: proposal.fixedTermMonths,
+    paymentTerms: proposal.paymentTerms as ProposalPricingSettings["paymentTerms"],
+    latePaymentClause: proposal.latePaymentClause,
+  };
 }
