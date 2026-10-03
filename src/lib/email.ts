@@ -22,8 +22,12 @@ function copyFields({ cc, bcc }: EmailCopies) {
   };
 }
 
+function recipientList(to: string | string[]): string[] {
+  return Array.isArray(to) ? to : [to];
+}
+
 interface SendProposalEmailParams extends EmailCopies {
-  to:             string;
+  to:             string | string[];
   /** Contact / To person. Company name must not be passed here. */
   recipientName?: string | null;
   proposalTitle:  string;
@@ -39,7 +43,7 @@ export async function sendProposalEmail({
 
   const { error } = await resend.emails.send({
     from:    FROM,
-    to:      [to],
+    to:      recipientList(to),
     ...copyFields({ cc, bcc }),
     subject: `Proposal: ${proposalTitle}`,
     html: emailWrapper(proposalTitle, `
@@ -191,7 +195,7 @@ export async function sendAcceptanceNotificationToOwner({
 // ─── Preview email (does not mark the proposal as sent) ──────────────────────
 
 interface PreviewEmailParams extends EmailCopies {
-  to:             string;
+  to:             string | string[];
   /** Contact / To person. Company name must not be passed here. */
   recipientName?: string | null;
   proposalTitle:  string;
@@ -207,7 +211,7 @@ export async function sendPreviewEmail({
 
   const { error } = await resend.emails.send({
     from:    FROM,
-    to:      [to],
+    to:      recipientList(to),
     ...copyFields({ cc, bcc }),
     subject: `Preview: ${proposalTitle}`,
     html: emailWrapper(`Preview: ${proposalTitle}`, `
@@ -228,7 +232,7 @@ export async function sendPreviewEmail({
 // ─── Follow-up email to client ────────────────────────────────────────────────
 
 interface FollowUpEmailParams extends EmailCopies {
-  to:             string;
+  to:             string | string[];
   /** Contact / To person. Company name must not be passed here. */
   recipientName?: string | null;
   proposalTitle:  string;
@@ -244,7 +248,7 @@ export async function sendFollowUpEmail({
 
   const { error } = await resend.emails.send({
     from:    FROM,
-    to:      [to],
+    to:      recipientList(to),
     ...copyFields({ cc, bcc }),
     subject: `Following up: ${proposalTitle}`,
     html: emailWrapper("Following up on your proposal", `
