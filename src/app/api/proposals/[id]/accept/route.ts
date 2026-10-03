@@ -19,7 +19,13 @@ import {
 } from "@/lib/proposal-document";
 import { defaultPricingSettings, type ProposalPricingData, type ProposalPricingSettings } from "@/lib/pricing-types";
 import { buildAgreedSummary, type AgreedSummary } from "@/lib/agreed-summary";
-import { acceptanceGuard, acceptanceUpdateFilter, settleAcceptance } from "@/lib/proposal-accept";
+import {
+  acceptanceGuard,
+  acceptanceUpdateFilter,
+  parseClientAbn,
+  parseSignerName,
+  settleAcceptance,
+} from "@/lib/proposal-accept";
 import { computePricingTotals } from "@/lib/utils";
 
 // POST /api/proposals/:id/accept — public endpoint, no auth required
@@ -53,16 +59,19 @@ export async function POST(
   }
 
   const body = await request.json();
-  const { signerName, clientIncluded, clientAbn, paymentChoices } = body as {
-    signerName:     string;
-    clientIncluded: Record<string, boolean>;
-    clientAbn?:     string | null;
-    paymentChoices?: Record<string, unknown>;
-  };
-
-  if (!signerName?.trim()) {
-    return NextResponse.json({ error: "Signer name is required." }, { status: 400 });
+  const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
+  const parsedName = parseSignerName(record.signerName);
+  if (!parsedName.ok) {
+    return NextResponse.json({ error: parsedName.error }, { status: 400 });
   }
+  const parsedAbn = parseClientAbn(record.clientAbn);
+  if (!parsedAbn.ok) {
+    return NextResponse.json({ error: parsedAbn.error }, { status: 400 });
+  }
+  const signerName = parsedName.signerName;
+  const clientAbn = parsedAbn.clientAbn;
+  const clientIncluded = record.clientIncluded as Record<string, boolean> | undefined;
+  const paymentChoices = record.paymentChoices as Record<string, unknown> | undefined;
 
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
@@ -113,7 +122,7 @@ export async function POST(
         items: existingPricing.items.map((item) => ({
           ...item,
           clientIncluded: item.isOptional
-            ? (clientIncluded[item.id] ?? item.clientIncluded)
+            ? ((clientIncluded ?? {})[item.id] ?? item.clientIncluded)
             : true,
         })),
       };
@@ -143,7 +152,7 @@ export async function POST(
       ...(pricingDataUpdate && { pricingData: pricingDataUpdate }),
       ...(totalValueUpdate !== undefined && { totalValue: totalValueUpdate }),
       // Client-supplied ABN for the invoice (optional; only overwrite if given)
-      ...(clientAbn && clientAbn.trim() ? { clientAbn: clientAbn.trim() } : {}),
+      ...(clientAbn ? { clientAbn } : {}),
     },
   });
 
@@ -174,7 +183,7 @@ export async function POST(
         signerName,
         acceptedAt:     acceptedAt.toISOString(),
         clientIncluded,
-        clientAbn:      clientAbn?.trim() || null,
+        clientAbn,
         ...(paymentRecords.length > 0 ? { paymentChoices: paymentRecords } : {}),
         agreed: storedAgreed,
       } as unknown as Prisma.InputJsonValue,

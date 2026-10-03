@@ -7,6 +7,7 @@ import { parseAgreedSummary } from "@/lib/agreed-summary";
 import { isProposalDocument } from "@/lib/proposal-document";
 import { pricingDataForClient } from "@/lib/proposal-detail";
 import { publicProposalPayload } from "@/lib/public-proposal";
+import { expiryUpdateWhere, statusAfterUpdate, viewedUpdateWhere } from "@/lib/proposal-accept";
 
 interface Props {
   params: Promise<{ publicId: string }>;
@@ -54,17 +55,28 @@ export default async function PublicProposalPage({ params }: Props) {
     notFound();
   }
 
-  // Enforce expiry: auto-transition SENT/VIEWED to EXPIRED if past expiry date
+  // Expire only from the status just read, so a newer status is left alone.
   if (
     proposal.expiresAt &&
     new Date(proposal.expiresAt) < new Date() &&
-    ["SENT", "VIEWED"].includes(proposal.status)
+    (proposal.status === "SENT" || proposal.status === "VIEWED")
   ) {
-    await prisma.proposal.update({
-      where: { id: proposal.id },
+    const expired = await prisma.proposal.updateMany({
+      where: expiryUpdateWhere(proposal.id, proposal.status),
       data:  { status: "EXPIRED" },
     });
-    proposal.status = "EXPIRED";
+    proposal.status = statusAfterUpdate({
+      updatedCount: expired.count,
+      previousStatus: proposal.status,
+      nextStatus: "EXPIRED",
+    });
+    if (expired.count !== 1) {
+      const current = await prisma.proposal.findUnique({
+        where: { id: proposal.id },
+        select: { status: true },
+      });
+      if (current) proposal.status = current.status;
+    }
   }
 
   // Log open event and handle first-open notification
@@ -102,11 +114,22 @@ export default async function PublicProposalPage({ params }: Props) {
     }
 
     if (proposal.status === "SENT") {
-      await prisma.proposal.update({
-        where: { id: proposal.id },
+      const viewed = await prisma.proposal.updateMany({
+        where: viewedUpdateWhere(proposal.id),
         data:  { status: "VIEWED" },
       });
-      proposal.status = "VIEWED";
+      proposal.status = statusAfterUpdate({
+        updatedCount: viewed.count,
+        previousStatus: proposal.status,
+        nextStatus: "VIEWED",
+      });
+      if (viewed.count !== 1) {
+        const current = await prisma.proposal.findUnique({
+          where: { id: proposal.id },
+          select: { status: true },
+        });
+        if (current) proposal.status = current.status;
+      }
     }
   }
 

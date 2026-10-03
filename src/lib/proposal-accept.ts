@@ -1,6 +1,9 @@
 /** Statuses a client may accept. A second accept cannot match this filter. */
 export const ACCEPTABLE_STATUSES = ["SENT", "VIEWED"] as const;
 
+export const SIGNER_NAME_MAX = 200;
+export const CLIENT_ABN_MAX = 50;
+
 export const ALREADY_ACCEPTED_ERROR = "This proposal has already been accepted.";
 
 export function acceptanceGuard(status: string):
@@ -39,4 +42,57 @@ export function settleAcceptance<T>(input: {
   incoming: T;
 }): T {
   return input.updatedCount === 1 ? input.incoming : input.stored;
+}
+
+/** Only move a proposal to viewed while it is still sent. */
+export function viewedUpdateWhere(id: string) {
+  return { id, status: "SENT" as const };
+}
+
+/** Only expire a proposal from the status just read, sent or viewed. */
+export function expiryUpdateWhere(id: string, status: "SENT" | "VIEWED") {
+  return { id, status };
+}
+
+/** Apply a status write only when the conditional update matched one row. */
+export function statusAfterUpdate<T extends string>(input: {
+  updatedCount: number;
+  previousStatus: T;
+  nextStatus: T;
+}): T {
+  return input.updatedCount === 1 ? input.nextStatus : input.previousStatus;
+}
+
+export function parseSignerName(value: unknown):
+  | { ok: true; signerName: string }
+  | { ok: false; error: string } {
+  if (typeof value !== "string") {
+    return { ok: false, error: "Signer name is required." };
+  }
+  const signerName = value.trim();
+  if (!signerName) {
+    return { ok: false, error: "Signer name is required." };
+  }
+  if (signerName.length > SIGNER_NAME_MAX) {
+    return { ok: false, error: `Signer name must be ${SIGNER_NAME_MAX} characters or fewer.` };
+  }
+  return { ok: true, signerName };
+}
+
+/** Blank or omitted ABN is left unset. A value must be text, within the cap. */
+export function parseClientAbn(value: unknown):
+  | { ok: true; clientAbn: string | null }
+  | { ok: false; error: string } {
+  if (value == null) return { ok: true, clientAbn: null };
+  if (typeof value !== "string") {
+    return { ok: false, error: "ABN must be text." };
+  }
+  const clientAbn = value.trim();
+  if (!clientAbn) {
+    return { ok: false, error: "ABN is required when it is included." };
+  }
+  if (clientAbn.length > CLIENT_ABN_MAX) {
+    return { ok: false, error: `ABN must be ${CLIENT_ABN_MAX} characters or fewer.` };
+  }
+  return { ok: true, clientAbn };
 }
