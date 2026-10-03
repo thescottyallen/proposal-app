@@ -1,4 +1,7 @@
 import type { NextConfig } from "next";
+import { assertDeploymentConfig } from "./src/lib/clerk-config";
+
+assertDeploymentConfig();
 
 const nextConfig: NextConfig = {
   // No preferredRegion here. The Supabase project region is not in this repo,

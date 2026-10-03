@@ -43,3 +43,10 @@ next-env.d.ts
 # prisma generated client
 /src/generated/
 .claude/
+
+# Clerk dev-to-production migration. The user export holds password hashes.
+dev_users.csv
+prod_users.csv
+backup.dump
+*.dump
+clerk-user-export.csv

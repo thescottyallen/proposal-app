@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { roleFromMetadata, type AppRole } from "@/lib/roles";
+import { roleFromMetadata } from "@/lib/roles";
+import { buildTeamInvitation } from "@/lib/team-invite";
 
 // GET /api/team — list all users with their roles
 export async function GET() {
@@ -50,16 +51,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const body = await request.json() as { emailAddress: string; role: AppRole };
-    const { emailAddress, role } = body;
-
-    if (!emailAddress || !role) {
-      return NextResponse.json({ error: "emailAddress and role are required" }, { status: 400 });
+    const body = await request.json() as { emailAddress?: unknown; role?: unknown };
+    const invitationInput = buildTeamInvitation(body, process.env.NEXT_PUBLIC_APP_URL);
+    if ("error" in invitationInput) {
+      return NextResponse.json({ error: invitationInput.error }, { status: 400 });
     }
 
     const invitation = await client.invitations.createInvitation({
-      emailAddress,
+      emailAddress: invitationInput.emailAddress,
       ignoreExisting: true,
+      publicMetadata: invitationInput.publicMetadata,
+      redirectUrl: invitationInput.redirectUrl,
     });
 
     return NextResponse.json({ id: invitation.id, emailAddress: invitation.emailAddress });

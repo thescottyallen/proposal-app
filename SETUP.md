@@ -25,6 +25,14 @@ npm install
 2. Copy your publishable key and secret key
 3. Update `.env.local` with both keys
 
+Production (`VERCEL_ENV=production`) refuses to build or start unless `CLERK_AUTHORIZED_PARTIES` is set to a comma-separated list of allowed origins. That list is passed to Clerk middleware so a token whose `azp` claim is a development origin is rejected.
+
+Preview builds fail without Clerk development keys (`pk_test_` and `sk_test_`) and a `DATABASE_URL`. Set `PRODUCTION_DB_HOST` to the production database host or Supabase project ref. That value is not a secret and is not a connection string. The host parsed from `DATABASE_URL` must be different, including a pooler URL whose username is `postgres.<ref>`.
+
+Team invites accept only the roles `admin`, `member`, and `viewer`. The invite stores that role in `publicMetadata` and sends the person to `{NEXT_PUBLIC_APP_URL}/sign-up`.
+
+Moving an existing development instance onto production Clerk is a separate, reviewed procedure: `scripts/clerk-migration/README.md`.
+
 ## 4. Generate Prisma client and run migrations
 
 ```bash
