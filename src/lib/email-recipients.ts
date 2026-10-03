@@ -3,6 +3,9 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 /** Maximum addresses accepted on To, CC, or BCC. */
 export const MAX_EMAIL_RECIPIENTS = 5;
 
+/** Maximum length of a custom send, preview, or follow-up message. */
+export const MAX_EMAIL_MESSAGE = 5000;
+
 export type EmailListLabel = "To" | "CC" | "BCC";
 
 /**
@@ -110,6 +113,9 @@ export function readProposalEmailRequest(body: unknown): ProposalEmailRequest {
 
   if (record.message != null && typeof record.message !== "string") {
     return { ok: false, error: "Message must be plain text." };
+  }
+  if (typeof record.message === "string" && record.message.length > MAX_EMAIL_MESSAGE) {
+    return { ok: false, error: `Message must be ${MAX_EMAIL_MESSAGE} characters or fewer.` };
   }
 
   return {

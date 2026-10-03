@@ -26,6 +26,11 @@ function recipientList(to: string | string[]): string[] {
   return Array.isArray(to) ? to : [to];
 }
 
+/** One subject line. Carriage returns and line feeds become spaces. */
+export function singleLine(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
 interface SendProposalEmailParams extends EmailCopies {
   to:             string | string[];
   /** Contact / To person. Company name must not be passed here. */
@@ -34,6 +39,27 @@ interface SendProposalEmailParams extends EmailCopies {
   publicUrl:      string;
   senderName?:    string;
   message?:       string;
+}
+
+export function proposalSentHtml({
+  proposalTitle, senderName, intro, publicUrl,
+}: {
+  proposalTitle: string;
+  senderName?: string;
+  intro: string;
+  publicUrl: string;
+}): string {
+  const prepared = senderName
+    ? `${escapeHtml(senderName)} has`
+    : "A proposal has been";
+  return emailWrapper(proposalTitle, `
+      ${intro}
+      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
+        ${prepared} prepared for you. Click below to view it.
+      </p>
+      ${ctaButton(publicUrl, "View Proposal")}
+      ${fallbackLink(publicUrl)}
+    `);
 }
 
 export async function sendProposalEmail({
@@ -45,15 +71,8 @@ export async function sendProposalEmail({
     from:    FROM,
     to:      recipientList(to),
     ...copyFields({ cc, bcc }),
-    subject: `Proposal: ${proposalTitle}`,
-    html: emailWrapper(proposalTitle, `
-      ${intro}
-      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
-        ${senderName ? `${senderName} has` : "A proposal has been"} prepared for you. Click below to view it.
-      </p>
-      ${ctaButton(publicUrl, "View Proposal")}
-      ${fallbackLink(publicUrl)}
-    `),
+    subject: `Proposal: ${singleLine(proposalTitle)}`,
+    html: proposalSentHtml({ proposalTitle, senderName, intro, publicUrl }),
   });
 
   if (error) throw new Error(`Failed to send email: ${error.message}`);
@@ -68,22 +87,29 @@ interface OpenNotificationParams {
   proposalId:    string;
 }
 
-export async function sendOpenNotification({
-  ownerEmail, clientName, proposalTitle, proposalId,
-}: OpenNotificationParams) {
+export function openNotificationHtml({
+  clientName, proposalTitle, proposalId,
+}: Omit<OpenNotificationParams, "ownerEmail">): string {
   const editUrl = `${APP_URL}/proposals/${proposalId}/edit`;
-  const { error } = await resend.emails.send({
-    from:    FROM,
-    to:      [ownerEmail],
-    subject: `${clientName || "Your client"} opened "${proposalTitle}"`,
-    html: emailWrapper("Proposal opened", `
+  const who = clientName || "Your client";
+  return emailWrapper("Proposal opened", `
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">
-        <strong>${clientName || "Your client"}</strong> just opened your proposal
-        <strong>${proposalTitle}</strong> for the first time.
+        <strong>${escapeHtml(who)}</strong> just opened your proposal
+        <strong>${escapeHtml(singleLine(proposalTitle))}</strong> for the first time.
       </p>
       ${ctaButton(editUrl, "View Proposal Activity")}
       ${fallbackLink(editUrl)}
-    `),
+    `);
+}
+
+export async function sendOpenNotification({
+  ownerEmail, clientName, proposalTitle, proposalId,
+}: OpenNotificationParams) {
+  const { error } = await resend.emails.send({
+    from:    FROM,
+    to:      [ownerEmail],
+    subject: `${singleLine(clientName || "Your client")} opened "${singleLine(proposalTitle)}"`,
+    html: openNotificationHtml({ clientName, proposalTitle, proposalId }),
   });
 
   if (error) console.error("Failed to send open notification:", error.message);
@@ -215,6 +241,27 @@ interface PreviewEmailParams extends EmailCopies {
   message?:       string;
 }
 
+export function proposalPreviewHtml({
+  proposalTitle, senderName, intro, publicUrl,
+}: {
+  proposalTitle: string;
+  senderName?: string;
+  intro: string;
+  publicUrl: string;
+}): string {
+  const shared = senderName ? `${escapeHtml(senderName)} shared` : "Here is";
+  return emailWrapper(`Preview: ${proposalTitle}`, `
+      ${intro}
+      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
+        ${shared} a preview of
+        <strong>${escapeHtml(singleLine(proposalTitle))}</strong>. You can open it with the link below.
+        This preview does not need a login.
+      </p>
+      ${ctaButton(publicUrl, "View Preview")}
+      ${fallbackLink(publicUrl)}
+    `);
+}
+
 export async function sendPreviewEmail({
   to, cc, bcc, recipientName, proposalTitle, publicUrl, senderName, message,
 }: PreviewEmailParams) {
@@ -224,17 +271,8 @@ export async function sendPreviewEmail({
     from:    FROM,
     to:      recipientList(to),
     ...copyFields({ cc, bcc }),
-    subject: `Preview: ${proposalTitle}`,
-    html: emailWrapper(`Preview: ${proposalTitle}`, `
-      ${intro}
-      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
-        ${senderName ? `${senderName} shared` : "Here is"} a preview of
-        <strong>${proposalTitle}</strong>. You can open it with the link below.
-        This preview does not need a login.
-      </p>
-      ${ctaButton(publicUrl, "View Preview")}
-      ${fallbackLink(publicUrl)}
-    `),
+    subject: `Preview: ${singleLine(proposalTitle)}`,
+    html: proposalPreviewHtml({ proposalTitle, senderName, intro, publicUrl }),
   });
 
   if (error) throw new Error(`Failed to send preview email: ${error.message}`);
@@ -252,6 +290,28 @@ interface FollowUpEmailParams extends EmailCopies {
   message?:       string;
 }
 
+export function proposalFollowUpHtml({
+  proposalTitle, senderName, intro, publicUrl,
+}: {
+  proposalTitle: string;
+  senderName?: string;
+  intro: string;
+  publicUrl: string;
+}): string {
+  const followed = senderName
+    ? `${escapeHtml(senderName)} wanted to follow up`
+    : "Just following up";
+  return emailWrapper("Following up on your proposal", `
+      ${intro}
+      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
+        ${followed} on the proposal
+        <strong>${escapeHtml(singleLine(proposalTitle))}</strong>. You can view it using the link below.
+      </p>
+      ${ctaButton(publicUrl, "View Proposal")}
+      ${fallbackLink(publicUrl)}
+    `);
+}
+
 export async function sendFollowUpEmail({
   to, cc, bcc, recipientName, proposalTitle, publicUrl, senderName, message,
 }: FollowUpEmailParams) {
@@ -261,16 +321,8 @@ export async function sendFollowUpEmail({
     from:    FROM,
     to:      recipientList(to),
     ...copyFields({ cc, bcc }),
-    subject: `Following up: ${proposalTitle}`,
-    html: emailWrapper("Following up on your proposal", `
-      ${intro}
-      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
-        ${senderName ? `${senderName} wanted to follow up` : "Just following up"} on the proposal
-        <strong>${proposalTitle}</strong>. You can view it using the link below.
-      </p>
-      ${ctaButton(publicUrl, "View Proposal")}
-      ${fallbackLink(publicUrl)}
-    `),
+    subject: `Following up: ${singleLine(proposalTitle)}`,
+    html: proposalFollowUpHtml({ proposalTitle, senderName, intro, publicUrl }),
   });
 
   if (error) throw new Error(`Failed to send follow-up email: ${error.message}`);
@@ -291,7 +343,7 @@ function emailWrapper(title: string, body: string, logoUrl: string = LOGO_URL): 
       ${emailHeaderLogoHtml(logoUrl)}
     </div>
     <div style="padding:32px 40px;">
-      <h1 style="margin:0 0 20px 0;font-family:'Montserrat','Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;line-height:1.2;color:#1A1A1A;">${title}<span style="color:#FBD34D;">.</span></h1>
+      <h1 style="margin:0 0 20px 0;font-family:'Montserrat','Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;line-height:1.2;color:#1A1A1A;">${escapeHtml(singleLine(title))}<span style="color:#FBD34D;">.</span></h1>
       ${body}
     </div>
     <div style="padding:18px 40px;border-top:1px solid #F1E2C0;">

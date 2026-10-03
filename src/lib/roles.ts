@@ -58,13 +58,18 @@ export function canAccessAllProposals(role: AppRole): boolean {
   return role === "admin";
 }
 
-/** Send, preview, and follow-up: the proposal owner, or an admin. */
+/**
+ * Send, preview, and follow-up.
+ * Requires a stored admin role, or a stored member role on a proposal they own.
+ * A missing role is not treated as member. Viewers cannot send.
+ */
 export function mayEmailProposal(input: {
   userId: string;
-  role: AppRole;
+  role: AppRole | null;
   createdBy: string;
 }): boolean {
-  return input.role === "admin" || input.userId === input.createdBy;
+  if (input.role === "admin") return true;
+  return input.role === "member" && input.userId === input.createdBy;
 }
 
 /**

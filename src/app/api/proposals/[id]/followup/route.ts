@@ -5,6 +5,7 @@ import { sendFollowUpEmail } from "@/lib/email";
 import { recipientNameFromProposal } from "@/lib/email-greeting";
 import { readProposalEmailRequest, recipientMetadata } from "@/lib/email-recipients";
 import { authorizeProposalEmail } from "@/lib/proposal-email-access";
+import { allowProposalEmail } from "@/lib/email-rate-limit";
 
 // POST /api/proposals/:id/followup
 export async function POST(
@@ -26,6 +27,13 @@ export async function POST(
   const parsed = readProposalEmailRequest(body);
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+
+  if (!allowProposalEmail(access.userId)) {
+    return NextResponse.json(
+      { error: "Please wait a moment before sending another email." },
+      { status: 429 }
+    );
   }
 
   const user       = await currentUser();

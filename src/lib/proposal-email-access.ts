@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { mayEmailProposal } from "@/lib/roles";
-import { getAuthContext } from "@/lib/roles.server";
+import { getExplicitAuthContext } from "@/lib/roles.server";
 
 const proposalInclude = {
   contact: { select: { name: true, email: true } },
@@ -11,10 +11,10 @@ const proposalInclude = {
 /**
  * Load a proposal for send, preview, or follow-up.
  * Signed-out callers get 401. A missing proposal is 404.
- * A signed-in user who is neither the owner nor an admin gets 403.
+ * A viewer, or someone with no stored role, gets 403.
  */
 export async function authorizeProposalEmail(id: string) {
-  const authCtx = await getAuthContext();
+  const authCtx = await getExplicitAuthContext();
   if (!authCtx) {
     return {
       ok: false as const,
@@ -43,11 +43,11 @@ export async function authorizeProposalEmail(id: string) {
     return {
       ok: false as const,
       response: NextResponse.json(
-        { error: "You don't have access to this proposal." },
+        { error: "You don't have access to send this proposal." },
         { status: 403 }
       ),
     };
   }
 
-  return { ok: true as const, proposal };
+  return { ok: true as const, proposal, userId: authCtx.userId };
 }
