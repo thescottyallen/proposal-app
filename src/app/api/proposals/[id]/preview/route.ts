@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { sendPreviewEmail } from "@/lib/email";
 import { recipientNameFromProposal } from "@/lib/email-greeting";
-import { isValidEmail, parsedCopyLists, recipientMetadata } from "@/lib/email-recipients";
+import { readProposalEmailRequest, recipientMetadata } from "@/lib/email-recipients";
+import { authorizeProposalEmail } from "@/lib/proposal-email-access";
 
 // POST /api/proposals/:id/preview
 // Emails a working preview link. Does not change proposal status.
@@ -12,40 +13,25 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const proposal = await prisma.proposal.findFirst({
-    where: { id, createdBy: userId },
-    include: {
-      contact: { select: { name: true, email: true } },
-      client:  { select: { contacts: { select: { name: true, email: true } } } },
-    },
-  });
-  if (!proposal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const access = await authorizeProposalEmail(id);
+  if (!access.ok) return access.response;
+  const proposal = access.proposal;
 
   if (!proposal.publicId) {
     return NextResponse.json({ error: "This proposal has no preview link" }, { status: 400 });
   }
 
-  let body: { to?: unknown; message?: unknown; cc?: unknown; bcc?: unknown };
+  let body: unknown;
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  const to = typeof body.to === "string" ? body.to.trim() : "";
-  if (!isValidEmail(to)) {
-    return NextResponse.json({ error: "A valid email address is required" }, { status: 400 });
+  const parsed = readProposalEmailRequest(body);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
-
-  const copies = parsedCopyLists(body.cc, body.bcc);
-  if (!copies.ok) {
-    return NextResponse.json({ error: copies.error }, { status: 400 });
-  }
-
-  const message = typeof body.message === "string" ? body.message : undefined;
 
   const user       = await currentUser();
   const senderName = user?.firstName && user?.lastName
@@ -57,21 +43,21 @@ export async function POST(
 
   try {
     await sendPreviewEmail({
-      to,
-      cc:            copies.cc,
-      bcc:           copies.bcc,
-      recipientName: recipientNameFromProposal(to, proposal),
+      to:            parsed.to,
+      cc:            parsed.cc,
+      bcc:           parsed.bcc,
+      recipientName: recipientNameFromProposal(parsed.to[0], proposal),
       proposalTitle: proposal.title,
       publicUrl,
       senderName,
-      message,
+      message:       parsed.message,
     });
 
     await prisma.proposalEvent.create({
       data: {
         proposalId: id,
         eventType:  "preview_sent",
-        metadata:   recipientMetadata(to, copies.cc, copies.bcc),
+        metadata:   recipientMetadata(parsed.to, parsed.cc, parsed.bcc),
       },
     });
 

@@ -59,7 +59,7 @@ export function buildOutreachIntroHtml(options: {
 
   const raw = options.message ?? "";
   const messageHtml = raw.trim()
-    ? `<p style="${MESSAGE_P}">${raw.replace(/\n/g, "<br/>")}</p>`
+    ? `<p style="${MESSAGE_P}">${escapeHtml(raw).replace(/\r\n|\r|\n/g, "<br/>")}</p>`
     : "";
 
   return `${greetingHtml}${messageHtml}`;

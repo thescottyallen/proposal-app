@@ -58,6 +58,15 @@ export function canAccessAllProposals(role: AppRole): boolean {
   return role === "admin";
 }
 
+/** Send, preview, and follow-up: the proposal owner, or an admin. */
+export function mayEmailProposal(input: {
+  userId: string;
+  role: AppRole;
+  createdBy: string;
+}): boolean {
+  return input.role === "admin" || input.userId === input.createdBy;
+}
+
 /**
  * Prisma `where` fragment that scopes a proposal query to what the given user
  * may access. Admins get an empty fragment (all proposals); everyone else is

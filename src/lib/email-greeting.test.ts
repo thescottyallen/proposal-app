@@ -82,6 +82,19 @@ describe("proposal email greeting", () => {
     assert.equal(contactFirstName("  Charbel, "), "Charbel");
   });
 
+  it("escapes message text and keeps line breaks as breaks", () => {
+    const html = buildOutreachIntroHtml({
+      recipientName: "Ann<script>",
+      message: `See <b>there</b> & friends\nnext`,
+    });
+
+    assert.match(html, /Hi Ann&lt;script&gt;,/);
+    assert.match(html, /See &lt;b&gt;there&lt;\/b&gt; &amp; friends<br\/>next/);
+    assert.match(html, /<p style="/);
+    assert.doesNotMatch(html, /<b>there<\/b>/);
+    assert.doesNotMatch(html, /<script>/);
+  });
+
   it("resolves the To address to the matching contact, not the company", () => {
     const name = recipientNameFromProposal("Charbel@tracta.com", {
       contact: { name: "Charbel Nahhas", email: "charbel@tracta.com" },

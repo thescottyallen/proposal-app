@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
 import { sendFollowUpEmail } from "@/lib/email";
 import { recipientNameFromProposal } from "@/lib/email-greeting";
-import { parsedCopyLists, recipientMetadata } from "@/lib/email-recipients";
+import { readProposalEmailRequest, recipientMetadata } from "@/lib/email-recipients";
+import { authorizeProposalEmail } from "@/lib/proposal-email-access";
 
 // POST /api/proposals/:id/followup
 export async function POST(
@@ -11,28 +12,20 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await authorizeProposalEmail(id);
+  if (!access.ok) return access.response;
+  const proposal = access.proposal;
 
-  const proposal = await prisma.proposal.findFirst({
-    where: { id, createdBy: userId },
-    include: {
-      contact: { select: { name: true, email: true } },
-      client:  { select: { contacts: { select: { name: true, email: true } } } },
-    },
-  });
-  if (!proposal) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const body = await request.json();
-  const { to, message, cc: ccInput, bcc: bccInput } = body;
-
-  if (!to || typeof to !== "string" || !to.includes("@")) {
-    return NextResponse.json({ error: "A valid email address is required" }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  const copies = parsedCopyLists(ccInput, bccInput);
-  if (!copies.ok) {
-    return NextResponse.json({ error: copies.error }, { status: 400 });
+  const parsed = readProposalEmailRequest(body);
+  if (!parsed.ok) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
 
   const user       = await currentUser();
@@ -45,21 +38,21 @@ export async function POST(
 
   try {
     await sendFollowUpEmail({
-      to,
-      cc:            copies.cc,
-      bcc:           copies.bcc,
-      recipientName: recipientNameFromProposal(to, proposal),
+      to:            parsed.to,
+      cc:            parsed.cc,
+      bcc:           parsed.bcc,
+      recipientName: recipientNameFromProposal(parsed.to[0], proposal),
       proposalTitle: proposal.title,
       publicUrl,
       senderName,
-      message,
+      message:       parsed.message,
     });
 
     await prisma.proposalEvent.create({
       data: {
         proposalId: id,
         eventType:  "followup_sent",
-        metadata:   recipientMetadata(to, copies.cc, copies.bcc),
+        metadata:   recipientMetadata(parsed.to, parsed.cc, parsed.bcc),
       },
     });
 
