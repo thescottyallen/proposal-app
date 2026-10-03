@@ -3,10 +3,21 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
+  MAX_EMAIL_MESSAGE,
   MAX_EMAIL_RECIPIENTS,
   readProposalEmailRequest,
   recipientMetadata,
 } from "./email-recipients.ts";
+import {
+  acceptanceClientSubject,
+  acceptanceOwnerSubject,
+  openNotificationHtml,
+  proposalFollowUpHtml,
+  proposalPreviewHtml,
+  proposalSentHtml,
+  singleLine,
+} from "./email.ts";
+import { createEmailRateLimit } from "./email-rate-limit.ts";
 import { mayEmailProposal } from "./roles.ts";
 
 function addresses(count: number, label: string): string[] {
@@ -27,18 +38,22 @@ function walk(dir: string): string[] {
 }
 
 describe("proposal email access", () => {
-  it("allows the owner or an admin", () => {
+  it("allows a stored member who owns the proposal, or a stored admin", () => {
     assert.equal(
       mayEmailProposal({ userId: "owner", role: "member", createdBy: "owner" }),
       true,
     );
     assert.equal(
-      mayEmailProposal({ userId: "owner", role: "viewer", createdBy: "owner" }),
+      mayEmailProposal({ userId: "admin", role: "admin", createdBy: "owner" }),
       true,
     );
     assert.equal(
-      mayEmailProposal({ userId: "admin", role: "admin", createdBy: "owner" }),
-      true,
+      mayEmailProposal({ userId: "owner", role: "viewer", createdBy: "owner" }),
+      false,
+    );
+    assert.equal(
+      mayEmailProposal({ userId: "owner", role: null, createdBy: "owner" }),
+      false,
     );
     assert.equal(
       mayEmailProposal({ userId: "other", role: "member", createdBy: "owner" }),
@@ -95,12 +110,73 @@ describe("proposal email access", () => {
     assert.equal(htmlMessage.ok, false);
     if (!htmlMessage.ok) assert.equal(htmlMessage.error, "Message must be plain text.");
 
+    const longMessage = readProposalEmailRequest({
+      to: "one@example.com",
+      message: "a".repeat(MAX_EMAIL_MESSAGE + 1),
+    });
+    assert.equal(longMessage.ok, false);
+
     const single = readProposalEmailRequest({ to: " one@example.com " });
     assert.equal(single.ok, true);
     if (single.ok) {
       assert.deepEqual(single.to, ["one@example.com"]);
       assert.equal(recipientMetadata(single.to, [], []).to, "one@example.com");
     }
+  });
+
+  it("keeps titles and sender names as plain text in proposal emails", () => {
+    const title = "Site <b>\r\nrebuild";
+    const sender = "Ada <script>";
+    const intro = "";
+    const publicUrl = "https://example.com/p/abc";
+    const sent = proposalSentHtml({ proposalTitle: title, senderName: sender, intro, publicUrl });
+    const preview = proposalPreviewHtml({ proposalTitle: title, senderName: sender, intro, publicUrl });
+    const followUp = proposalFollowUpHtml({ proposalTitle: title, senderName: sender, intro, publicUrl });
+    const opened = openNotificationHtml({
+      clientName: "Ada & Co",
+      proposalTitle: title,
+      proposalId: "prop-1",
+    });
+
+    for (const html of [sent, preview, followUp]) {
+      assert.match(html, /Ada &lt;script&gt;/);
+      assert.match(html, /Site &lt;b&gt;[\s\S]*rebuild/);
+      assert.doesNotMatch(html, /<script>/);
+      assert.doesNotMatch(html, /<b>/);
+    }
+    assert.match(sent, /<h1[^>]*>Site &lt;b&gt;/);
+    assert.match(preview, /Preview: Site &lt;b&gt;/);
+    assert.match(followUp, /&lt;b&gt;/);
+    assert.match(opened, /Ada &amp; Co/);
+    assert.doesNotMatch(opened, /<b>/);
+    assert.equal(singleLine(title), "Site <b> rebuild");
+    assert.equal(singleLine(title).includes("\n"), false);
+    assert.equal(singleLine(title).includes("\r"), false);
+    assert.equal(acceptanceClientSubject(title), "You accepted: Site <b> rebuild");
+    assert.equal(
+      acceptanceClientSubject(title, "Thanks for\r\n{title}"),
+      "Thanks for Site <b> rebuild",
+    );
+    assert.equal(acceptanceOwnerSubject(title), "Accepted: Site <b> rebuild");
+    assert.equal(acceptanceClientSubject(title).includes("\n"), false);
+    assert.equal(acceptanceOwnerSubject(title).includes("\r"), false);
+  });
+
+  it("paces preview the same way as send and follow-up", () => {
+    const api = path.join(process.cwd(), "src", "app", "api", "proposals", "[id]");
+    for (const route of ["send", "preview", "followup"]) {
+      const text = readFileSync(path.join(api, route, "route.ts"), "utf8");
+      assert.match(text, /allowProposalEmail\(access\.userId\)/);
+    }
+  });
+
+  it("limits how often one person can send", () => {
+    const allow = createEmailRateLimit(2, 1_000);
+    assert.equal(allow("user", 0), true);
+    assert.equal(allow("user", 10), true);
+    assert.equal(allow("user", 20), false);
+    assert.equal(allow("user", 1_001), true);
+    assert.equal(allow("other", 20), true);
   });
 
   it("does not keep an admin setup route", () => {

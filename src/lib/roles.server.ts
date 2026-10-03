@@ -1,7 +1,7 @@
 // Server-only role helpers. Do NOT import this file from client components.
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { explicitRole, roleFromMetadata, type AppRole } from "@/lib/roles";
+import { explicitRole, type AppRole } from "@/lib/roles";
 
 function roleFromSessionClaims(
   sessionClaims: Record<string, unknown> | null | undefined
@@ -45,6 +45,18 @@ export async function getCurrentUserRole(): Promise<AppRole> {
 export async function getAuthContext(): Promise<
   { userId: string; role: AppRole } | null
 > {
+  const explicit = await getExplicitAuthContext();
+  if (!explicit) return null;
+  return { userId: explicit.userId, role: explicit.role ?? "member" };
+}
+
+/**
+ * Signed-in user and the role actually stored on their Clerk public metadata.
+ * Missing metadata stays null. It does not become member.
+ */
+export async function getExplicitAuthContext(): Promise<
+  { userId: string; role: AppRole | null } | null
+> {
   const { userId, sessionClaims } = await auth();
   if (!userId) return null;
 
@@ -55,7 +67,7 @@ export async function getAuthContext(): Promise<
 
   const client = await clerkClient();
   const user = await client.users.getUser(userId);
-  const role = roleFromMetadata(user.publicMetadata as Record<string, unknown>);
+  const role = explicitRole(user.publicMetadata as Record<string, unknown>);
   return { userId, role };
 }
 
