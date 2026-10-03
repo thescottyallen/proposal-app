@@ -6,6 +6,7 @@ import { sendOpenNotification } from "@/lib/email";
 import { parseAgreedSummary } from "@/lib/agreed-summary";
 import { isProposalDocument } from "@/lib/proposal-document";
 import { pricingDataForClient } from "@/lib/proposal-detail";
+import { publicProposalPayload } from "@/lib/public-proposal";
 
 interface Props {
   params: Promise<{ publicId: string }>;
@@ -30,7 +31,6 @@ export default async function PublicProposalPage({ params }: Props) {
       totalValue: true,
       createdBy: true,
       currency: true,
-      exchangeRate: true,
       gstEnabled: true,
       roundingMode: true,
       discountType: true,
@@ -142,21 +142,19 @@ export default async function PublicProposalPage({ params }: Props) {
 
   return (
     <PublicProposalView
-      proposal={{
+      proposal={publicProposalPayload({
         id:            proposal.id,
         title:         proposal.title,
         clientName:    proposal.clientName,
         clientEmail:   proposal.clientEmail,
         clientAbn:     proposal.clientAbn,
-        content:       proposal.content as Record<string, unknown>,
+        content:       proposal.content,
         status:        proposal.status,
         expiresAt:     proposal.expiresAt?.toISOString() ?? null,
         invoiceNumber: proposal.invoiceNumber,
         totalValue:    proposal.totalValue,
-        // Legacy flat fields (used to migrate old proposals on the fly)
         pricingData,
         currency:           proposal.currency,
-        exchangeRate:       proposal.exchangeRate,
         gstEnabled:         proposal.gstEnabled,
         roundingMode:       proposal.roundingMode,
         discountType:       proposal.discountType,
@@ -170,7 +168,7 @@ export default async function PublicProposalPage({ params }: Props) {
         fixedTermMonths:    proposal.fixedTermMonths,
         paymentTerms:       proposal.paymentTerms,
         latePaymentClause:  proposal.latePaymentClause,
-      }}
+      })}
       business={{
         businessName: bizSettings?.businessName ?? "",
         abn:          bizSettings?.abn ?? null,

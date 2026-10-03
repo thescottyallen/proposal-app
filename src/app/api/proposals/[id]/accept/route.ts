@@ -19,6 +19,7 @@ import {
 } from "@/lib/proposal-document";
 import { defaultPricingSettings, type ProposalPricingData, type ProposalPricingSettings } from "@/lib/pricing-types";
 import { buildAgreedSummary, type AgreedSummary } from "@/lib/agreed-summary";
+import { acceptanceGuard, acceptanceUpdateFilter, settleAcceptance } from "@/lib/proposal-accept";
 import { computePricingTotals } from "@/lib/utils";
 
 // POST /api/proposals/:id/accept — public endpoint, no auth required
@@ -35,15 +36,16 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (!["SENT", "VIEWED"].includes(proposal.status)) {
-    return NextResponse.json(
-      { error: "This proposal cannot be accepted in its current state." },
-      { status: 409 }
-    );
+  const guard = acceptanceGuard(proposal.status);
+  if (!guard.ok) {
+    return NextResponse.json({ error: guard.error }, { status: guard.status });
   }
 
   if (proposal.expiresAt && new Date(proposal.expiresAt) < new Date()) {
-    await prisma.proposal.update({ where: { id }, data: { status: "EXPIRED" } });
+    await prisma.proposal.updateMany({
+      where: acceptanceUpdateFilter(id),
+      data: { status: "EXPIRED" },
+    });
     return NextResponse.json(
       { error: "This proposal has expired and can no longer be accepted." },
       { status: 410 }
@@ -133,8 +135,8 @@ export async function POST(
     roundingMode: proposal.roundingMode as ProposalPricingSettings["roundingMode"],
   });
 
-  await prisma.proposal.update({
-    where: { id },
+  const updated = await prisma.proposal.updateMany({
+    where: acceptanceUpdateFilter(id),
     data: {
       status: "ACCEPTED",
       ...(contentUpdate    && { content:     contentUpdate as object }),
@@ -144,6 +146,24 @@ export async function POST(
       ...(clientAbn && clientAbn.trim() ? { clientAbn: clientAbn.trim() } : {}),
     },
   });
+
+  // A second or overlapping accept matches nothing, so the first agreement stays.
+  const storedAgreed = settleAcceptance({
+    updatedCount: updated.count,
+    stored: null,
+    incoming: agreed,
+  });
+  if (updated.count !== 1 || storedAgreed == null) {
+    const current = await prisma.proposal.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+    const again = acceptanceGuard(current?.status ?? "ACCEPTED");
+    return NextResponse.json(
+      { error: again.ok ? "This proposal has already been accepted." : again.error },
+      { status: again.ok ? 409 : again.status }
+    );
+  }
 
   await prisma.proposalEvent.create({
     data: {
@@ -156,7 +176,7 @@ export async function POST(
         clientIncluded,
         clientAbn:      clientAbn?.trim() || null,
         ...(paymentRecords.length > 0 ? { paymentChoices: paymentRecords } : {}),
-        agreed,
+        agreed: storedAgreed,
       } as unknown as Prisma.InputJsonValue,
     },
   });

@@ -264,6 +264,36 @@ describe("acceptance emails", () => {
     assert.match(owner, /View Proposal/);
   });
 
+  it("shows a signer name and a custom note as plain text", () => {
+    const agreed = summarise({ ...defaultPricingSettings(), gstEnabled: false }, [
+      defaultPricingItem({ unitPrice: 1000, gstApplicable: false }),
+    ]);
+    const client = acceptanceClientEmailHtml({
+      clientName: "Ada & Co",
+      proposalTitle: 'Site "rebuild"',
+      signerName: "Ada <script>",
+      businessName: "Bus & Co",
+      publicUrl: "https://example.com/p/abc",
+      agreed,
+      customMessage: "Thanks <b>Ada</b>\nSee {title} from {business}",
+    });
+    const owner = acceptanceOwnerEmailHtml({
+      clientName: "Ada & Co",
+      signerName: "Ada <script>",
+      proposalTitle: 'Site "rebuild"',
+      proposalId: "prop-1",
+      agreed,
+    });
+
+    assert.match(client, /Hi Ada &amp; Co,/);
+    assert.match(client, /Thanks &lt;b&gt;Ada&lt;\/b&gt;<br\/>See Site &quot;rebuild&quot; from Bus &amp; Co/);
+    assert.doesNotMatch(client, /<script>/);
+    assert.doesNotMatch(client, /<b>Ada<\/b>/);
+    assert.match(owner, /Signed by: <strong>Ada &lt;script&gt;<\/strong>/);
+    assert.match(owner, /Site &quot;rebuild&quot;/);
+    assert.doesNotMatch(owner, /<script>/);
+  });
+
   it("round-trips the stored summary", () => {
     const agreed = summarise({ ...defaultPricingSettings(), gstEnabled: true }, [
       defaultPricingItem({ unitPrice: 1000, gstApplicable: true }),
