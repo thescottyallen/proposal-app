@@ -19,6 +19,15 @@ import {
 } from "@/lib/proposal-document";
 import { defaultPricingSettings, type ProposalPricingData, type ProposalPricingSettings } from "@/lib/pricing-types";
 import { buildAgreedSummary, type AgreedSummary } from "@/lib/agreed-summary";
+import {
+  acceptanceGuard,
+  acceptanceUpdateFilter,
+  parseClientAbn,
+  parseClientIncluded,
+  parsePaymentChoices,
+  parseSignerName,
+  settleAcceptance,
+} from "@/lib/proposal-accept";
 import { computePricingTotals } from "@/lib/utils";
 
 // POST /api/proposals/:id/accept — public endpoint, no auth required
@@ -35,32 +44,51 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (!["SENT", "VIEWED"].includes(proposal.status)) {
-    return NextResponse.json(
-      { error: "This proposal cannot be accepted in its current state." },
-      { status: 409 }
-    );
+  const guard = acceptanceGuard(proposal.status);
+  if (!guard.ok) {
+    return NextResponse.json({ error: guard.error }, { status: guard.status });
   }
 
   if (proposal.expiresAt && new Date(proposal.expiresAt) < new Date()) {
-    await prisma.proposal.update({ where: { id }, data: { status: "EXPIRED" } });
+    await prisma.proposal.updateMany({
+      where: acceptanceUpdateFilter(id),
+      data: { status: "EXPIRED" },
+    });
     return NextResponse.json(
       { error: "This proposal has expired and can no longer be accepted." },
       { status: 410 }
     );
   }
 
-  const body = await request.json();
-  const { signerName, clientIncluded, clientAbn, paymentChoices } = body as {
-    signerName:     string;
-    clientIncluded: Record<string, boolean>;
-    clientAbn?:     string | null;
-    paymentChoices?: Record<string, unknown>;
-  };
-
-  if (!signerName?.trim()) {
-    return NextResponse.json({ error: "Signer name is required." }, { status: 400 });
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
+  const record = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  const parsedName = parseSignerName(record.signerName);
+  if (!parsedName.ok) {
+    return NextResponse.json({ error: parsedName.error }, { status: 400 });
+  }
+  const parsedAbn = parseClientAbn(record.clientAbn);
+  if (!parsedAbn.ok) {
+    return NextResponse.json({ error: parsedAbn.error }, { status: 400 });
+  }
+  const parsedIncluded = parseClientIncluded(record.clientIncluded);
+  if (!parsedIncluded.ok) {
+    return NextResponse.json({ error: parsedIncluded.error }, { status: 400 });
+  }
+  const parsedPayments = parsePaymentChoices(record.paymentChoices);
+  if (!parsedPayments.ok) {
+    return NextResponse.json({ error: parsedPayments.error }, { status: 400 });
+  }
+  const signerName = parsedName.signerName;
+  const clientAbn = parsedAbn.clientAbn;
+  const clientIncluded = parsedIncluded.clientIncluded;
+  const paymentChoices = parsedPayments.paymentChoices;
 
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
@@ -111,7 +139,7 @@ export async function POST(
         items: existingPricing.items.map((item) => ({
           ...item,
           clientIncluded: item.isOptional
-            ? (clientIncluded[item.id] ?? item.clientIncluded)
+            ? ((clientIncluded ?? {})[item.id] ?? item.clientIncluded)
             : true,
         })),
       };
@@ -133,17 +161,35 @@ export async function POST(
     roundingMode: proposal.roundingMode as ProposalPricingSettings["roundingMode"],
   });
 
-  await prisma.proposal.update({
-    where: { id },
+  const updated = await prisma.proposal.updateMany({
+    where: acceptanceUpdateFilter(id),
     data: {
       status: "ACCEPTED",
       ...(contentUpdate    && { content:     contentUpdate as object }),
       ...(pricingDataUpdate && { pricingData: pricingDataUpdate }),
       ...(totalValueUpdate !== undefined && { totalValue: totalValueUpdate }),
       // Client-supplied ABN for the invoice (optional; only overwrite if given)
-      ...(clientAbn && clientAbn.trim() ? { clientAbn: clientAbn.trim() } : {}),
+      ...(clientAbn ? { clientAbn } : {}),
     },
   });
+
+  // A second or overlapping accept matches nothing, so the first agreement stays.
+  const storedAgreed = settleAcceptance({
+    updatedCount: updated.count,
+    stored: null,
+    incoming: agreed,
+  });
+  if (updated.count !== 1 || storedAgreed == null) {
+    const current = await prisma.proposal.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+    const again = acceptanceGuard(current?.status ?? "ACCEPTED");
+    return NextResponse.json(
+      { error: again.ok ? "This proposal has already been accepted." : again.error },
+      { status: again.ok ? 409 : again.status }
+    );
+  }
 
   await prisma.proposalEvent.create({
     data: {
@@ -154,9 +200,9 @@ export async function POST(
         signerName,
         acceptedAt:     acceptedAt.toISOString(),
         clientIncluded,
-        clientAbn:      clientAbn?.trim() || null,
+        clientAbn,
         ...(paymentRecords.length > 0 ? { paymentChoices: paymentRecords } : {}),
-        agreed,
+        agreed: storedAgreed,
       } as unknown as Prisma.InputJsonValue,
     },
   });

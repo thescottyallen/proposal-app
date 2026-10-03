@@ -48,7 +48,7 @@ interface ProposalProps {
   // Legacy fields used for migration
   pricingData:     Record<string, unknown> | null;
   currency:        string;
-  exchangeRate:    number;
+  exchangeRate?:   number;
   gstEnabled:      boolean;
   roundingMode:    string;
   discountType:    string | null;
@@ -108,7 +108,7 @@ function expiryDisplay(expiresAt: string | null, status: string) {
 function legacyPricingSettings(p: ProposalProps): ProposalPricingSettings {
   return {
     currency:           p.currency           as ProposalPricingSettings["currency"],
-    exchangeRate:       p.exchangeRate,
+    exchangeRate:       p.exchangeRate ?? 1,
     gstEnabled:         p.gstEnabled,
     roundingMode:       p.roundingMode       as ProposalPricingSettings["roundingMode"],
     optionsMode:        false,

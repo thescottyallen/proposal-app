@@ -7,9 +7,9 @@ import { computePricingTotals } from "@/lib/utils";
 import {
   isProposalDocument,
   getAllPricingBlocks,
-  stripDocumentInternalFields,
   ProposalDocument,
 } from "@/lib/proposal-document";
+import { publicProposalPayload, type PublicProposalInput } from "@/lib/public-proposal";
 import type { ProposalPricingSettings } from "@/lib/pricing-types";
 import {
   buildRevisionSnapshot,
@@ -227,28 +227,8 @@ export async function DELETE(
 }
 
 // ─── sanitiseForClient ────────────────────────────────────────────────────────
-// Used by the public route (/p/[publicId]) — strips margin from pricing blocks
-// and never exposes internalNotes.
+// Public proposal JSON. Only the allow-listed fields are returned.
 
-export function sanitiseForClient(proposal: {
-  content: unknown;
-  pricingData: unknown;
-  [key: string]: unknown;
-}) {
-  const content = proposal.content as Record<string, unknown> | null;
-
-  // New format: strip margin from pricing blocks inside the document
-  if (content && isProposalDocument(content)) {
-    return {
-      ...proposal,
-      content: stripDocumentInternalFields(content as ProposalDocument),
-      internalNotes: undefined,
-    };
-  }
-
-  // Legacy format: strip from pricingData column (keep for backward compat)
-  return {
-    ...proposal,
-    internalNotes: undefined,
-  };
+export function sanitiseForClient(proposal: PublicProposalInput) {
+  return publicProposalPayload(proposal);
 }

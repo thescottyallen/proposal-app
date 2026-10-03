@@ -1,5 +1,5 @@
 import { Resend } from "resend";
-import { agreedSummaryHtml, type AgreedSummary } from "@/lib/agreed-summary";
+import { agreedSummaryHtml, escapeHtml, type AgreedSummary } from "@/lib/agreed-summary";
 import { buildOutreachIntroHtml } from "@/lib/email-greeting";
 import { emailHeaderLogoHtml } from "@/lib/email-layout";
 
@@ -104,19 +104,30 @@ interface AcceptanceClientParams {
   logoUrl?:        string;
 }
 
+function htmlText(value: string): string {
+  return escapeHtml(value).replace(/\r\n|\r|\n/g, "<br/>");
+}
+
+function acceptanceMessageHtml(message: string, proposalTitle: string, businessName: string): string {
+  return htmlText(message)
+    .replaceAll("{title}", escapeHtml(proposalTitle))
+    .replaceAll("{business}", escapeHtml(businessName));
+}
+
 export function acceptanceClientEmailHtml({
   clientName, proposalTitle, signerName, businessName, publicUrl, agreed,
   customMessage, logoUrl,
 }: Omit<AcceptanceClientParams, "to" | "customSubject">): string {
+  const greeting = escapeHtml(clientName || signerName);
   const bodyParagraph = customMessage
-    ? `<p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">${customMessage.replace(/\n/g, "<br/>").replace("{title}", proposalTitle).replace("{business}", businessName)}</p>`
+    ? `<p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">${acceptanceMessageHtml(customMessage, proposalTitle, businessName)}</p>`
     : `<p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">
-        This confirms your acceptance of <strong>${proposalTitle}</strong> from ${businessName}.
+        This confirms your acceptance of <strong>${escapeHtml(proposalTitle)}</strong> from ${escapeHtml(businessName)}.
         Your electronic signature has been recorded with a timestamp.
       </p>`;
 
   return emailWrapper("Proposal accepted", `
-      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">Hi ${clientName || signerName},</p>
+      <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">Hi ${greeting},</p>
       ${bodyParagraph}
       ${agreedSummaryHtml(agreed)}
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 32px 0;">
@@ -163,15 +174,15 @@ export function acceptanceOwnerEmailHtml({
   clientName, signerName, proposalTitle, proposalId, agreed, logoUrl,
 }: Omit<AcceptanceOwnerParams, "ownerEmail">): string {
   const editUrl = `${APP_URL}/proposals/${proposalId}/edit`;
-  const who = signerName || clientName || "Your client";
+  const who = escapeHtml(signerName || clientName || "Your client");
 
   return emailWrapper("Proposal accepted", `
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 16px 0;">Great news.</p>
       <p style="font-size:15px;line-height:1.6;color:#2D2A26;margin:0 0 24px 0;">
         <strong>${who}</strong> has accepted
-        <strong>${proposalTitle}</strong>.
+        <strong>${escapeHtml(proposalTitle)}</strong>.
       </p>
-      <p style="font-size:15px;color:#2D2A26;margin:0 0 12px 0;">Signed by: <strong>${signerName}</strong></p>
+      <p style="font-size:15px;color:#2D2A26;margin:0 0 12px 0;">Signed by: <strong>${escapeHtml(signerName)}</strong></p>
       ${agreedSummaryHtml(agreed)}
       ${ctaButton(editUrl, "View Proposal")}
     `, logoUrl);
