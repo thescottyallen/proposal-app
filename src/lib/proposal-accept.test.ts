@@ -5,6 +5,7 @@ import {
   CLIENT_ABN_MAX,
   SIGNER_NAME_MAX,
   acceptanceGuard,
+  acceptanceStatusFilter,
   acceptanceUpdateFilter,
   expiryUpdateWhere,
   parseClientAbn,
@@ -27,8 +28,14 @@ describe("accepting a proposal", () => {
   });
 
   it("only updates a proposal that is still sent or viewed", () => {
-    const filter = acceptanceUpdateFilter("prop_1");
+    const now = new Date("2026-10-03T00:00:00.000Z");
+    const filter = acceptanceUpdateFilter("prop_1", now);
     assert.deepEqual(filter, {
+      id: "prop_1",
+      status: { in: ["SENT", "VIEWED"] },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    });
+    assert.deepEqual(acceptanceStatusFilter("prop_1"), {
       id: "prop_1",
       status: { in: ["SENT", "VIEWED"] },
     });

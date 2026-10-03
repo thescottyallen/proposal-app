@@ -124,6 +124,22 @@ export function savedStatusLabel(savedAt: Date | string): string {
  * stored first. A content write always keeps a revision, including drafts.
  * Status-only updates (lost, reopen) do not.
  */
+export const ACCEPTED_STATUS_MESSAGE =
+  "This proposal has been accepted. Duplicate it to make a new copy.";
+
+/**
+ * An accepted proposal stays accepted. Content can still be saved.
+ * Any other status, including draft or sent, is refused.
+ */
+export function acceptedStatusChange(
+  currentStatus: string,
+  nextStatus: unknown
+): { ok: true } | { ok: false; status: 409; error: string } {
+  if (currentStatus !== "ACCEPTED") return { ok: true };
+  if (nextStatus === undefined || nextStatus === "ACCEPTED") return { ok: true };
+  return { ok: false, status: 409, error: ACCEPTED_STATUS_MESSAGE };
+}
+
 export function evaluateProposalPatch(input: PatchInput): PatchDecision {
   const serverUpdatedAt = toIso(input.serverUpdatedAt) ?? new Date(0).toISOString();
 

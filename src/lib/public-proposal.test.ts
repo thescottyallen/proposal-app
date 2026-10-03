@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { publicProposalPayload, type PublicProposalInput } from "./public-proposal.ts";
+import { publicButtonHref, publicProposalPayload, type PublicProposalInput } from "./public-proposal.ts";
 
 function keysDeep(value: unknown, found: string[] = []): string[] {
   if (Array.isArray(value)) {
@@ -176,5 +176,49 @@ describe("public proposal payload", () => {
     assert.match(serialised, /"description":"Build"/);
     const pricing = payload.pricingData as { items: unknown[] } | null;
     assert.equal(pricing?.items.length, 1);
+  });
+
+  it("keeps https, mailto, and tel on buttons", () => {
+    assert.equal(publicButtonHref("https://example.com/a"), "https://example.com/a");
+    assert.equal(publicButtonHref("mailto:ada@example.com"), "mailto:ada@example.com");
+    assert.equal(publicButtonHref("tel:+61390000000"), "tel:+61390000000");
+    assert.equal(publicButtonHref(" example.com/a "), "https://example.com/a");
+    assert.equal(publicButtonHref("javascript:alert(1)"), null);
+    assert.equal(publicButtonHref("http://example.com"), null);
+    assert.equal(publicButtonHref("data:text/html,hi"), null);
+
+    const payload = publicProposalPayload({
+      ...base,
+      content: {
+        version: 2,
+        pages: [
+          {
+            id: "page-1",
+            name: "Start",
+            blocks: [
+              {
+                type: "button",
+                id: "bad",
+                label: "Bad",
+                linkType: "url",
+                href: "javascript:alert(1)",
+                targetPageId: "javascript:alert(1)",
+              },
+              {
+                type: "button",
+                id: "mail",
+                label: "Email",
+                linkType: "url",
+                href: "mailto:ada@example.com",
+                targetPageId: "mailto:ada@example.com",
+              },
+            ],
+          },
+        ],
+      },
+    } as PublicProposalInput);
+    const serialised = JSON.stringify(payload);
+    assert.equal(serialised.includes("javascript:"), false);
+    assert.match(serialised, /mailto:ada@example.com/);
   });
 });

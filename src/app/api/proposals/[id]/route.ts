@@ -12,6 +12,8 @@ import {
 import { publicProposalPayload, type PublicProposalInput } from "@/lib/public-proposal";
 import type { ProposalPricingSettings } from "@/lib/pricing-types";
 import {
+  ACCEPTED_STATUS_MESSAGE,
+  acceptedStatusChange,
   buildRevisionSnapshot,
   evaluateProposalPatch,
   nextRevisionVersion,
@@ -67,7 +69,15 @@ export async function PATCH(
   });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const body = await request.json();
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+  const record = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, any>
+    : {};
   const {
     title, clientName, clientEmail, clientAbn,
     content, status, expiresAt, internalNotes, lostReason,
@@ -76,7 +86,16 @@ export async function PATCH(
     pricingSettings: legacyPricingSettings,
     baseUpdatedAt,
     force,
-  } = body;
+  } = record;
+
+  const statusDecision = acceptedStatusChange(existing.status, status);
+  if (!statusDecision.ok) {
+    return NextResponse.json(
+      { error: statusDecision.error },
+      { status: statusDecision.status }
+    );
+  }
+  const changingStatus = status !== undefined && status !== existing.status;
 
   // Compute totalValue and first pricing settings from the content
   let totalValue: number | undefined;
@@ -138,16 +157,15 @@ export async function PATCH(
     }
   }
 
-  const proposal = await prisma.proposal.update({
-    where: { id },
-    select: { id: true, updatedAt: true, status: true },
+  const written = await prisma.proposal.updateMany({
+    where: changingStatus ? { id, status: existing.status } : { id },
     data: {
       ...(title         !== undefined && { title }),
       ...(clientName    !== undefined && { clientName }),
       ...(clientEmail   !== undefined && { clientEmail }),
       ...(clientAbn     !== undefined && { clientAbn }),
       ...(content       !== undefined && { content }),
-      ...(status        !== undefined && { status }),
+      ...(changingStatus && { status }),
       ...(totalValue    !== undefined && { totalValue }),
       ...(expiresAt     !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null }),
       ...(internalNotes !== undefined && { internalNotes }),
@@ -163,6 +181,29 @@ export async function PATCH(
       }),
     },
   });
+  if (written.count !== 1) {
+    const current = await prisma.proposal.findUnique({
+      where: { id },
+      select: { status: true, updatedAt: true },
+    });
+    if (current?.status === "ACCEPTED") {
+      return NextResponse.json({ error: ACCEPTED_STATUS_MESSAGE }, { status: 409 });
+    }
+    return NextResponse.json(
+      {
+        error: "This proposal was changed in another tab or by someone else.",
+        code: "conflict",
+        updatedAt: current?.updatedAt.toISOString() ?? existing.updatedAt.toISOString(),
+      },
+      { status: 409 }
+    );
+  }
+
+  const proposal = await prisma.proposal.findUnique({
+    where: { id },
+    select: { id: true, updatedAt: true, status: true },
+  });
+  if (!proposal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // Change log: record who changed what, so every proposal has a visible edit
   // history. Especially important now that admins can edit others' proposals.

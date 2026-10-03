@@ -10,6 +10,7 @@ import {
   type ButtonBlock,
   type ProposalPage,
 } from "@/lib/proposal-document";
+import { publicButtonHref } from "@/lib/public-proposal";
 
 interface ButtonBlockEditorProps {
   block: ButtonBlock;
@@ -34,7 +35,8 @@ const ALIGN_CLASSES: Record<string, string> = {
 };
 
 function openWebAddress(href: string) {
-  const url = /^[a-z][a-z0-9+.-]*:/i.test(href) ? href : `https://${href}`;
+  const url = publicButtonHref(href);
+  if (!url) return;
   window.open(url, "_blank", "noopener,noreferrer");
 }
 

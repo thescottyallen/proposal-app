@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  ACCEPTED_STATUS_MESSAGE,
+  acceptedStatusChange,
   buildRevisionSnapshot,
   conflictMessage,
   evaluateProposalPatch,
@@ -137,6 +139,21 @@ describe("revision on draft save", () => {
     const snapshot = buildRevisionSnapshot({ ...previous, status: "SENT" });
     assert.equal(snapshot.status, "SENT");
     assert.equal(snapshot.content, previous.content);
+  });
+
+  it("keeps an accepted proposal accepted", () => {
+    for (const next of ["DRAFT", "SENT", "VIEWED", "LOST", "EXPIRED", ""]) {
+      const decision = acceptedStatusChange("ACCEPTED", next);
+      assert.equal(decision.ok, false);
+      if (decision.ok) continue;
+      assert.equal(decision.status, 409);
+      assert.equal(decision.error, ACCEPTED_STATUS_MESSAGE);
+      assert.match(decision.error, /Duplicate it/);
+    }
+    assert.equal(acceptedStatusChange("ACCEPTED", "ACCEPTED").ok, true);
+    assert.equal(acceptedStatusChange("ACCEPTED", undefined).ok, true);
+    assert.equal(acceptedStatusChange("SENT", "DRAFT").ok, true);
+    assert.equal(acceptedStatusChange("LOST", "DRAFT").ok, true);
   });
 
   it("does not write a revision for a status change with no content", () => {

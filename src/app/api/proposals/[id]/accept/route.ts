@@ -11,6 +11,7 @@ import {
   isProposalDocument,
   applyClientChoices,
   applyPaymentChoices,
+  clientIncludedValue,
   allPaymentChoicesResolved,
   getAllPricingBlocks,
   paymentAcceptanceRecords,
@@ -21,6 +22,7 @@ import { defaultPricingSettings, type ProposalPricingData, type ProposalPricingS
 import { buildAgreedSummary, type AgreedSummary } from "@/lib/agreed-summary";
 import {
   acceptanceGuard,
+  acceptanceStatusFilter,
   acceptanceUpdateFilter,
   parseClientAbn,
   parseClientIncluded,
@@ -51,7 +53,7 @@ export async function POST(
 
   if (proposal.expiresAt && new Date(proposal.expiresAt) < new Date()) {
     await prisma.proposal.updateMany({
-      where: acceptanceUpdateFilter(id),
+      where: acceptanceStatusFilter(id),
       data: { status: "EXPIRED" },
     });
     return NextResponse.json(
@@ -138,9 +140,13 @@ export async function POST(
         ...existingPricing,
         items: existingPricing.items.map((item) => ({
           ...item,
-          clientIncluded: item.isOptional
-            ? ((clientIncluded ?? {})[item.id] ?? item.clientIncluded)
-            : true,
+          clientIncluded: clientIncludedValue(
+            clientIncluded,
+            item.id,
+            item.clientIncluded,
+            false,
+            item.isOptional === true
+          ),
         })),
       };
     }

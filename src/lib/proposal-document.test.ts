@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { defaultPricingSettings } from "./pricing-types.ts";
 import {
+  applyClientChoices,
   buttonLinkType,
+  clientIncludedValue,
   defaultDocument,
   migrateToDocument,
   pageIdFromHash,
@@ -59,6 +61,60 @@ describe("proposal page links", () => {
   it("reads a page id from the public hash", () => {
     assert.equal(pageIdFromHash("#page-invest", pages), "invest");
     assert.equal(pageIdFromHash("#missing", pages), null);
+  });
+});
+
+describe("client included choices", () => {
+  it("keeps a stored choice and defaults a missing one", () => {
+    assert.equal(clientIncludedValue({ line: false }, "line", true, false, true), false);
+    assert.equal(clientIncludedValue({}, "line", true, false, true), true);
+    assert.equal(clientIncludedValue(undefined, "line", undefined, false, true), false);
+    assert.equal(clientIncludedValue(null, "required", undefined, false, false), true);
+    assert.equal(clientIncludedValue(null, "option", undefined, true, false), false);
+
+    const doc: ProposalDocument = {
+      version: 2,
+      pages: [
+        {
+          id: "page",
+          name: "Fees",
+          blocks: [
+            {
+              type: "pricing",
+              id: "price",
+              pricingData: {
+                sections: [],
+                items: [
+                  {
+                    id: "optional",
+                    sectionId: null,
+                    type: "fixed",
+                    description: "Extra",
+                    scopeNote: "",
+                    quantity: 1,
+                    unitPrice: 10,
+                    isOptional: true,
+                    clientIncluded: undefined as unknown as boolean,
+                    margin: 0,
+                    gstApplicable: true,
+                    discountType: null,
+                    discountValue: null,
+                    order: 0,
+                  },
+                ],
+              },
+              pricingSettings: { ...defaultPricingSettings(), optionsMode: false },
+            },
+          ],
+        },
+      ],
+    };
+    const applied = applyClientChoices(doc, undefined);
+    const block = applied.pages[0].blocks[0];
+    assert.equal(block.type, "pricing");
+    if (block.type === "pricing") {
+      assert.equal(block.pricingData.items[0].clientIncluded, false);
+    }
   });
 });
 

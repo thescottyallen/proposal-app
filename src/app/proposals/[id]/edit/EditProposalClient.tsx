@@ -524,7 +524,11 @@ export function EditProposalClient({
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ status: "LOST", lostReason: reason }),
       });
-      if (!res.ok) { showToast("Failed to mark as lost"); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(typeof data.error === "string" ? data.error : "Failed to mark as lost");
+        return;
+      }
       const saved = await res.json().catch(() => ({}));
       if (typeof saved.updatedAt === "string") {
         baseUpdatedAtRef.current = saved.updatedAt;
@@ -548,7 +552,11 @@ export function EditProposalClient({
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ status: "DRAFT", lostReason: null }),
       });
-      if (!res.ok) { showToast("Failed to reopen"); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(typeof data.error === "string" ? data.error : "Failed to reopen");
+        return;
+      }
       const saved = await res.json().catch(() => ({}));
       if (typeof saved.updatedAt === "string") {
         baseUpdatedAtRef.current = saved.updatedAt;
