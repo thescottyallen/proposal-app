@@ -18,7 +18,11 @@ Scotty runs it on his own machine. The script prompts for secrets with `read -rs
 
 Remap and rollback lock the eight tables that store a Clerk user id. Each lock can wait up to 10 seconds, so the worst case is about 80 seconds. Reads keep working. Writes wait until the transaction ends.
 
-`purge-export` deletes the Clerk user export, which holds password hashes, once 24 hours have passed after `freeze-start`. The database dump and the generated `dev_users.csv` and `prod_users.csv` stay until `cleanup`, which is allowed 14 days after `freeze-start`.
+`mark-cutover` records the moment the `pk_live_` Production deployment goes live. That timestamp is not `freeze-start`.
+
+`purge-export` deletes the Clerk user export, which holds password hashes, once 24 hours have passed after `cutover`. It refuses to run when `cutover` has not been recorded. The database dump and the generated `dev_users.csv` and `prod_users.csv` stay until `cleanup`, which is allowed 14 days after the same `cutover`.
+
+Rollback is refused 24 hours after `cutover`, or after the first acceptance since `cutover`. Before `cutover` is recorded, that cutoff has not started.
 
 ## Modes
 
@@ -34,9 +38,10 @@ Remap and rollback lock the eight tables that store a Clerk user id. Each lock c
 | `revoke-dev-sessions` | Revokes active development-instance sessions. |
 | `demote-dev-admins --keep` | Sets other development admins to `member`, merging only the role key. |
 | `restore-dev-roles --export` | Puts development roles back. Users missing from the export are listed and left alone. |
-| `rollback [--orphans-to]` | Checks the reverse remap, then revokes pending production invitations, then remaps ids back. |
-| `purge-export` | Deletes the user export after the 24 hour cutoff. |
-| `cleanup` | Drops the `clerk_migration` schema and deletes the workdir, 14 days after `freeze-start`. |
+| `rollback [--orphans-to]` | Checks the reverse remap, then revokes pending production invitations, then remaps ids back. Refuses 24 hours after `cutover`, or after the first acceptance since `cutover`. |
+| `mark-cutover` | Records the UTC time the `pk_live_` Production deployment goes live. |
+| `purge-export` | Deletes the user export 24 hours after `cutover`. Refuses when `cutover` is missing. |
+| `cleanup` | Drops the `clerk_migration` schema and deletes the workdir, 14 days after `cutover`. |
 
 `preflight`, `remap`, and `rollback` stop when the latest applied Prisma migration is not `20261002041000_add_proposal_list_indexes`, or when `prisma/schema.prisma` differs from commit `9acabc8`. The error says the user-id column list must be re-checked before the script is run.
 

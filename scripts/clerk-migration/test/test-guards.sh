@@ -638,6 +638,131 @@ fi
 export PATH="${PATH#"$ROLL_STUB:"}"
 rm -rf "$ROLL_STUB" "$ROLL_WORK" "$ROLL_OK"
 
+echo "== cutover timestamp"
+CUT_WORK=$(mktemp -d)
+chmod 700 "$CUT_WORK"
+set +e
+mark_out=$("$SCRIPT" mark-cutover --workdir "$CUT_WORK" 2>&1)
+mark_code=$?
+set -e
+if [[ "$mark_code" -eq 0 && ! -f "$CUT_WORK/cutover" && "$mark_out" == *pk_live_* && "$mark_out" == *"would record cutover"* ]]; then
+  ok "mark-cutover dry-run records nothing"
+else
+  bad "mark-cutover dry-run records nothing (code=$mark_code)"
+  printf '%s\n' "$mark_out" | tail -20
+fi
+"$SCRIPT" mark-cutover --apply --workdir "$CUT_WORK" >/dev/null
+recorded=$(tr -d '[:space:]' < "$CUT_WORK/cutover")
+mode=$(stat -c '%a' "$CUT_WORK/cutover")
+set +e
+again_out=$("$SCRIPT" mark-cutover --apply --workdir "$CUT_WORK" 2>&1)
+again_code=$?
+set -e
+if [[ "$again_code" -ne 0 && "$again_out" == *refusing\ to\ replace\ a\ recorded\ cutover* && "$(tr -d '[:space:]' < "$CUT_WORK/cutover")" == "$recorded" && "$recorded" == *Z && "$mode" == "600" ]]; then
+  ok "mark-cutover --apply writes the go-live time once"
+else
+  bad "mark-cutover --apply writes the go-live time once (code=$again_code mode=$mode)"
+  printf '%s\n' "$again_out" | tail -20
+fi
+
+printf 'id,primary_email_address,public_metadata\nuser_devA,a@x.com,{}\n' > "$CUT_WORK/users.csv"
+printf '%s\n' users.csv > "$CUT_WORK/export-record"
+printf '%s\n' kept > "$CUT_WORK/backup.dump"
+printf '%s\n' kept > "$CUT_WORK/dev_users.csv"
+date -u -d '48 hours ago' +%Y-%m-%dT%H:%M:%SZ > "$CUT_WORK/freeze-start"
+rm -f "$CUT_WORK/cutover"
+set +e
+no_cut_out=$("$SCRIPT" purge-export --apply --workdir "$CUT_WORK" 2>&1)
+no_cut_code=$?
+set -e
+if [[ "$no_cut_code" -ne 0 && "$no_cut_out" == *cutover\ is\ missing* && -f "$CUT_WORK/users.csv" ]]; then
+  ok "purge-export refuses to run when cutover was not recorded"
+else
+  bad "purge-export refuses to run when cutover was not recorded (code=$no_cut_code)"
+  printf '%s\n' "$no_cut_out" | tail -20
+fi
+date -u +%Y-%m-%dT%H:%M:%SZ > "$CUT_WORK/cutover"
+set +e
+early_out=$("$SCRIPT" purge-export --apply --workdir "$CUT_WORK" 2>&1)
+early_code=$?
+set -e
+if [[ "$early_code" -ne 0 && "$early_out" == *before\ the\ 24\ hour\ cutoff* && -f "$CUT_WORK/users.csv" ]]; then
+  ok "purge-export waits 24 hours after cutover"
+else
+  bad "purge-export waits 24 hours after cutover (code=$early_code)"
+  printf '%s\n' "$early_out" | tail -20
+fi
+date -u -d '25 hours ago' +%Y-%m-%dT%H:%M:%SZ > "$CUT_WORK/cutover"
+"$SCRIPT" purge-export --apply --workdir "$CUT_WORK" >/dev/null
+if [[ ! -f "$CUT_WORK/users.csv" && -f "$CUT_WORK/backup.dump" && -f "$CUT_WORK/dev_users.csv" ]]; then
+  ok "purge-export deletes only the password-hash export after cutover"
+else
+  bad "purge-export deletes only the password-hash export after cutover"
+fi
+
+rm -f "$CUT_WORK/cutover"
+set +e
+clean_missing=$("$SCRIPT" cleanup --workdir "$CUT_WORK" 2>&1)
+clean_missing_code=$?
+set -e
+if [[ "$clean_missing_code" -ne 0 && "$clean_missing" == *cutover\ is\ missing* ]]; then
+  ok "cleanup refuses to run when cutover was not recorded"
+else
+  bad "cleanup refuses to run when cutover was not recorded (code=$clean_missing_code)"
+  printf '%s\n' "$clean_missing" | tail -20
+fi
+date -u -d '20 days ago' +%Y-%m-%dT%H:%M:%SZ > "$CUT_WORK/freeze-start"
+date -u +%Y-%m-%dT%H:%M:%SZ > "$CUT_WORK/cutover"
+set +e
+clean_early=$("$SCRIPT" cleanup --apply --workdir "$CUT_WORK" 2>&1)
+clean_early_code=$?
+set -e
+schema_left=$("${PSQL[@]}" -tA -c "SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'clerk_migration'")
+if [[ "$clean_early_code" -ne 0 && "$clean_early" == *14\ days\ after\ cutover* && "$schema_left" == "1" && -d "$CUT_WORK" ]]; then
+  ok "cleanup counts 14 days from cutover, not freeze-start"
+else
+  bad "cleanup counts 14 days from cutover, not freeze-start (code=$clean_early_code schema=$schema_left)"
+  printf '%s\n' "$clean_early" | tail -20
+fi
+date -u -d '15 days ago' +%Y-%m-%dT%H:%M:%SZ > "$CUT_WORK/cutover"
+set +e
+clean_due=$("$SCRIPT" cleanup --workdir "$CUT_WORK" 2>&1)
+clean_due_code=$?
+set -e
+schema_still=$("${PSQL[@]}" -tA -c "SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'clerk_migration'")
+if [[ "$clean_due_code" -eq 0 && "$clean_due" == *"would drop schema clerk_migration"* && "$schema_still" == "1" ]]; then
+  ok "cleanup dry-run lists the drop once 14 days have passed since cutover"
+else
+  bad "cleanup dry-run lists the drop once 14 days have passed since cutover (code=$clean_due_code)"
+  printf '%s\n' "$clean_due" | tail -20
+fi
+rm -rf "$CUT_WORK"
+
+echo "== rollback cutoff"
+ROLL2=$(mktemp -d)
+chmod 700 "$ROLL2"
+date -u -d '25 hours ago' +%Y-%m-%dT%H:%M:%SZ > "$ROLL2/cutover"
+feed "Clerk secret key" "sk_live_localtest" -- "$SCRIPT" rollback --apply --workdir "$ROLL2"
+if [[ "$feed_code" -ne 0 && "$feed_out" == *refusing\ rollback\ 24\ hours\ after\ cutover* && "$feed_out" != *Type\ the\ database\ name* && "$feed_out" != *revoked* ]]; then
+  ok "rollback stops 24 hours after cutover, before invitations are revoked"
+else
+  bad "rollback stops 24 hours after cutover, before invitations are revoked (code=$feed_code)"
+  printf '%s\n' "$feed_out" | tail -20
+fi
+"${PSQL[@]}" -c "INSERT INTO proposals(id,title,client_name,client_email,content,public_id,created_by,updated_at) VALUES ('p_cut','P','A','a@a','{}','pub_cut','user_devA',now())" >/dev/null
+"${PSQL[@]}" -c "INSERT INTO proposal_events(id,proposal_id,event_type,metadata) VALUES ('e_cut','p_cut','accepted','{\"signerName\":\"x\"}')" >/dev/null
+date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ > "$ROLL2/cutover"
+feed "Clerk secret key" "sk_live_localtest" -- "$SCRIPT" rollback --apply --workdir "$ROLL2"
+if [[ "$feed_code" -ne 0 && "$feed_out" == *first\ acceptance\ since\ cutover* && "$feed_out" != *Type\ the\ database\ name* && "$feed_out" != *revoked* ]]; then
+  ok "rollback stops after the first acceptance since cutover"
+else
+  bad "rollback stops after the first acceptance since cutover (code=$feed_code)"
+  printf '%s\n' "$feed_out" | tail -20
+fi
+"${PSQL[@]}" -c "DELETE FROM proposal_events WHERE id = 'e_cut'" >/dev/null
+"${PSQL[@]}" -c "DELETE FROM proposals WHERE id = 'p_cut'" >/dev/null
+rm -rf "$ROLL2"
+
 echo "== git status ignores node_modules and has no secrets"
 GIT_STUB=$(mktemp -d)
 GIT_LOG="$GIT_STUB/log"

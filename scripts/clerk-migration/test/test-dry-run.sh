@@ -145,6 +145,8 @@ done
 
 printf 'id,primary_email_address,public_metadata\nuser_devA,a@x.com,"{""role"":""admin"",""theme"":""dark""}"\nuser_devB,b@x.com,{}\n' > "$WORK/users.csv"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$WORK/freeze-start"
+date -u +%Y-%m-%dT%H:%M:%SZ > "$WORK/cutover"
+chmod 600 "$WORK/freeze-start" "$WORK/cutover"
 
 before=$(checksum)
 real_before=$("${PSQL[@]}" -tA -c "SELECT user_id||':'||business_name||':'||invoice_seq FROM business_settings ORDER BY 1")
@@ -261,6 +263,7 @@ expect_ok_key revoke-dev-sessions sk_test_localtest
 expect_ok_key demote-dev-admins sk_test_localtest --keep user_prodA
 expect_ok_key restore-dev-roles sk_test_localtest --export "$WORK/users.csv"
 expect_ok_key rollback sk_live_localtest
+expect_ok mark-cutover
 expect_ok purge-export
 expect_ok cleanup
 

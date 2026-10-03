@@ -99,6 +99,7 @@ Modes:
   demote-dev-admins --keep <user id>
   restore-dev-roles --export <csv>
   rollback [--orphans-to <dev id>]
+  mark-cutover
   purge-export
   cleanup
 
@@ -127,9 +128,13 @@ Freeze notes:
   backup --apply writes freeze-start in UTC.
   Remap and rollback lock eight tables. Each lock can wait up to 10 seconds,
   so the worst case is about 80 seconds. Reads keep working while writes wait.
+  mark-cutover records when the pk_live_ Production deployment goes live.
   purge-export deletes the user export, which holds password hashes, once 24
-  hours have passed after freeze-start. The dump and the generated CSVs stay
-  until cleanup, which is allowed 14 days after freeze-start.
+  hours have passed after that cutover. It refuses to run when cutover is
+  missing. The dump and the generated CSVs stay until cleanup, which is
+  allowed 14 days after the same cutover.
+  Rollback is refused 24 hours after cutover, or after the first acceptance
+  since cutover. Before cutover is recorded, that cutoff has not started.
 EOF
 }
 
@@ -246,7 +251,7 @@ require_export() {
   esac
   rel=${export_real#"$work_real"/}
   case "$rel" in
-    dev_users.csv|prod_users.csv|backup.dump|FREEZE-NOTES.txt|freeze-start|export-record)
+    dev_users.csv|prod_users.csv|backup.dump|FREEZE-NOTES.txt|freeze-start|cutover|export-record)
       die "export must be the Clerk user export"
       ;;
   esac
@@ -575,10 +580,13 @@ Remap and rollback lock the eight tables that store a Clerk user id.
 Each lock can wait up to 10 seconds, so the worst case is about 80 seconds.
 Reads keep working. Writes wait until the transaction ends.
 
+mark-cutover records when the pk_live_ Production deployment goes live.
 purge-export deletes the Clerk user export (it holds password hashes) once
-24 hours have passed after freeze-start. The database dump and the generated
-dev_users.csv and prod_users.csv stay until cleanup, which is allowed 14 days
-after freeze-start.
+24 hours have passed after that cutover. It refuses to run when cutover is
+missing. The database dump and the generated dev_users.csv and prod_users.csv
+stay until cleanup, which is allowed 14 days after the same cutover.
+Rollback is refused 24 hours after cutover, or after the first acceptance
+since cutover.
 EOF
   chmod 600 "$WORKDIR/FREEZE-NOTES.txt"
 }
@@ -594,12 +602,35 @@ row_count_sql() {
   printf '%s\n' "$sql"
 }
 
-seconds_since_freeze() {
-  local start now
-  [[ -f "$WORKDIR/freeze-start" ]] || return 1
-  start=$(epoch_of "$(tr -d '[:space:]' < "$WORKDIR/freeze-start")")
+seconds_since_stamp() {
+  local file=$1 start now
+  [[ -f "$file" ]] || return 1
+  start=$(epoch_of "$(tr -d '[:space:]' < "$file")")
   now=$(date -u +%s)
   printf '%s' $((now - start))
+}
+
+require_cutover() {
+  [[ -f "$WORKDIR/cutover" ]] || die "cutover is missing; run mark-cutover --apply when the pk_live_ Production deployment goes live"
+}
+
+rollback_cutoff() {
+  local elapsed start count
+  if [[ ! -f "$WORKDIR/cutover" ]]; then
+    note "cutover is not recorded, so the rollback cutoff has not started"
+    return 0
+  fi
+  elapsed=$(seconds_since_stamp "$WORKDIR/cutover")
+  if (( elapsed >= 86400 )); then
+    die "refusing rollback 24 hours after cutover"
+  fi
+  start=$(tr -d '[:space:]' < "$WORKDIR/cutover")
+  [[ "$start" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || die "cutover timestamp could not be read"
+  count=$(psql_value -c "SELECT count(*) FROM public.proposal_events WHERE event_type = 'accepted' AND created_at >= timestamptz '${start}'")
+  count=${count//[[:space:]]/}
+  if [[ "$count" != "0" ]]; then
+    die "refusing rollback after the first acceptance since cutover"
+  fi
 }
 
 mode_preflight() {
@@ -757,8 +788,8 @@ ORDER BY e.created_at;
 SQL
 )" -v "freeze_start=${start}"
   lock_note
-  if [[ -f "$WORKDIR/export-record" ]]; then
-    elapsed=$(seconds_since_freeze || true)
+  if [[ -f "$WORKDIR/export-record" && -f "$WORKDIR/cutover" ]]; then
+    elapsed=$(seconds_since_stamp "$WORKDIR/cutover" || true)
     if [[ -n "$elapsed" && "$elapsed" -ge 86400 ]]; then
       note "the user export is past the 24 hour cutoff; run purge-export"
     fi
@@ -803,6 +834,7 @@ mode_restore() {
 mode_rollback() {
   require_clerk_key "sk_live_"
   prepare_db
+  rollback_cutoff
   schema_guard
   bun_clerk "$API" list-unmapped-users 2>&1 | tee -a "$LOG" >&2
   bun_clerk "$API" list-pending-invitations 2>&1 | tee -a "$LOG" >&2
@@ -830,11 +862,31 @@ SQL
   lock_note
 }
 
+mode_mark_cutover() {
+  local stamp
+  stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  note "cutover is the moment the pk_live_ Production deployment goes live"
+  if [[ -f "$WORKDIR/cutover" ]]; then
+    note "cutover is already recorded: $(tr -d '[:space:]' < "$WORKDIR/cutover")"
+    if (( APPLY )); then
+      die "refusing to replace a recorded cutover"
+    fi
+    return 0
+  fi
+  if (( APPLY )); then
+    printf '%s\n' "$stamp" > "$WORKDIR/cutover"
+    chmod 600 "$WORKDIR/cutover"
+    note "wrote cutover ${stamp}"
+  else
+    note "would record cutover ${stamp}"
+  fi
+}
+
 mode_purge_export() {
   local elapsed rel path real
-  [[ -f "$WORKDIR/freeze-start" ]] || die "freeze-start is missing; run backup --apply first"
+  require_cutover
   [[ -f "$WORKDIR/export-record" ]] || die "no export has been recorded"
-  elapsed=$(seconds_since_freeze)
+  elapsed=$(seconds_since_stamp "$WORKDIR/cutover")
   while IFS= read -r rel; do
     [[ -n "$rel" ]] || continue
     path="${WORKDIR}/${rel}"
@@ -851,7 +903,7 @@ mode_purge_export() {
         note "would delete export ${rel}"
       fi
     else
-      note "keeping export ${rel} until 24 hours after freeze-start"
+      note "keeping export ${rel} until 24 hours after cutover"
       if (( APPLY )); then
         die "refusing to delete the export before the 24 hour cutoff"
       fi
@@ -863,15 +915,15 @@ mode_purge_export() {
 mode_cleanup() {
   local elapsed target
   prepare_db
-  [[ -f "$WORKDIR/freeze-start" ]] || die "freeze-start is missing; run backup --apply first"
-  elapsed=$(seconds_since_freeze)
+  require_cutover
+  elapsed=$(seconds_since_stamp "$WORKDIR/cutover")
   note "would drop schema clerk_migration"
   note "would delete workdir ${WORKDIR}"
   if [[ -f "$WORKDIR/backup.dump" ]]; then
     note "dump backup.dump is removed only by this cleanup"
   fi
   if (( elapsed < 14 * 86400 )); then
-    note "cleanup is allowed 14 days after freeze-start"
+    note "cleanup is allowed 14 days after cutover"
     if (( APPLY )); then
       die "refusing cleanup before day 14"
     fi
@@ -889,7 +941,7 @@ mode_cleanup() {
 }
 
 case "$MODE" in
-  preflight|backup|import|build-map|remap|verify|freeze-check|revoke-dev-sessions|demote-dev-admins|restore-dev-roles|rollback|purge-export|cleanup) ;;
+  preflight|backup|import|build-map|remap|verify|freeze-check|revoke-dev-sessions|demote-dev-admins|restore-dev-roles|rollback|mark-cutover|purge-export|cleanup) ;;
   *) die "unknown mode ${MODE}" ;;
 esac
 if (( REVERSE )) && [[ "$MODE" != "verify" ]]; then
@@ -916,6 +968,7 @@ case "$MODE" in
   demote-dev-admins) mode_demote ;;
   restore-dev-roles) mode_restore ;;
   rollback) mode_rollback ;;
+  mark-cutover) mode_mark_cutover ;;
   purge-export) mode_purge_export ;;
   cleanup) mode_cleanup ;;
   *) die "unknown mode ${MODE}" ;;
