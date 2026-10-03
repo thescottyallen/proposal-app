@@ -1,18 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
+import { getOrCreateBusinessSettings } from "@/lib/business-settings";
 
 // GET /api/settings — returns this user's BusinessSettings, creating defaults if absent
 export async function GET() {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const settings = await prisma.businessSettings.upsert({
-    where:  { userId },
-    create: { userId },
-    update: {},
-  });
-
+  const settings = await getOrCreateBusinessSettings(userId);
   return NextResponse.json(settings);
 }
 

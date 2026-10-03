@@ -35,7 +35,7 @@ export default function ContentLibraryPage() {
   const [createError, setCreateError] = useState<string | null>(null);
 
   const loadBlocks = () => {
-    fetch("/api/content-blocks")
+    fetch("/api/content-blocks?view=index")
       .then((res) => res.json())
       .then((data) => {
         setBlocks(data);

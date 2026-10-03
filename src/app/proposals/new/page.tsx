@@ -1,7 +1,7 @@
 "use client";
 
 import { Shell } from "@/components/ui/Shell";
-import { ProposalEditor } from "@/components/editor/ProposalEditor";
+import { ProposalEditor } from "@/components/editor/LazyProposalEditor";
 import { StartFromChooser, type TemplateChoice } from "@/components/proposals/StartFromChooser";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";

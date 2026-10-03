@@ -1,7 +1,7 @@
 "use client";
 
 import { Shell } from "@/components/ui/Shell";
-import { ProposalEditor } from "@/components/editor/ProposalEditor";
+import { ProposalEditor } from "@/components/editor/LazyProposalEditor";
 import { useRouter, useParams } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import { ArrowLeft, Save } from "lucide-react";

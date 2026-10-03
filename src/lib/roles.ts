@@ -15,13 +15,20 @@ export const ROLE_DESCRIPTIONS: Record<AppRole, string> = {
   viewer: "Read-only access to proposals. Cannot edit or see internal margins",
 };
 
+/** A role that was actually stored. Missing metadata is not "member". */
+export function explicitRole(
+  metadata: Record<string, unknown> | null | undefined
+): AppRole | null {
+  const role = metadata?.role;
+  if (role === "admin" || role === "member" || role === "viewer") return role;
+  return null;
+}
+
 /** Read the role from a Clerk user's publicMetadata. Defaults to "member". */
 export function roleFromMetadata(
   metadata: Record<string, unknown> | null | undefined
 ): AppRole {
-  const role = metadata?.role;
-  if (role === "admin" || role === "member" || role === "viewer") return role;
-  return "member";
+  return explicitRole(metadata) ?? "member";
 }
 
 // ─── Permission checks ────────────────────────────────────────────────────────

@@ -158,6 +158,10 @@ model Proposal {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  @@index([createdBy], map: "proposals_created_by_idx")
+  @@index([status], map: "proposals_status_idx")
+  @@index([updatedAt], map: "proposals_updated_at_idx")
+  @@index([clientId], map: "proposals_client_id_idx")
   @@map("proposals")
 }
 
@@ -211,5 +215,7 @@ model ProposalEvent {
   metadata        Json?    // arbitrary event data (e.g. accepted: signerName, clientIncluded)
   createdAt       DateTime @default(now()) @map("created_at")
 
+  @@index([proposalId, createdAt], map: "proposal_events_proposal_id_created_at_idx")
+  @@index([proposalId, eventType], map: "proposal_events_proposal_id_event_type_idx")
   @@map("proposal_events")
 }

@@ -9,6 +9,10 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
 ]);
 
+// clerkMiddleware still reads the session on every matched request, including
+// public proposal views, so the page can tell an owner from a client. protect()
+// only runs for signed-in app routes. Role checks should use the session token
+// (see getAuthContext) instead of calling Clerk's user API again.
 export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
     await auth.protect();

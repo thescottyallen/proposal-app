@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { clerkClient } from "@clerk/nextjs/server";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getAuthContext } from "@/lib/roles.server";
@@ -14,11 +13,10 @@ import {
 import type { ProposalPricingSettings } from "@/lib/pricing-types";
 import {
   buildRevisionSnapshot,
-  contentFromSnapshot,
   evaluateProposalPatch,
   nextRevisionVersion,
-  summarizeProposalContent,
 } from "@/lib/proposal-save";
+import { loadEditorProposal } from "@/lib/proposal-detail";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,38 +36,6 @@ function firstPricingSettings(doc: ProposalDocument): ProposalPricingSettings | 
   return blocks.length > 0 ? blocks[0].pricingSettings : null;
 }
 
-interface ResolvedClerkUser {
-  name:  string;
-  email: string;
-}
-
-/** Best-effort resolution of Clerk user IDs to display names and primary emails. */
-async function resolveClerkUsers(
-  ids: string[]
-): Promise<Record<string, ResolvedClerkUser>> {
-  const unique = [...new Set(ids.filter(Boolean))];
-  if (unique.length === 0) return {};
-  const client = await clerkClient();
-  const entries = await Promise.all(
-    unique.map(async (uid) => {
-      try {
-        const u = await client.users.getUser(uid);
-        const email =
-          u.emailAddresses.find((e) => e.id === u.primaryEmailAddressId)
-            ?.emailAddress ?? "";
-        const name =
-          [u.firstName, u.lastName].filter(Boolean).join(" ").trim() ||
-          email ||
-          "Unknown user";
-        return [uid, { name, email }] as const;
-      } catch {
-        return [uid, { name: "Unknown user", email: "" }] as const;
-      }
-    })
-  );
-  return Object.fromEntries(entries);
-}
-
 // ─── GET /api/proposals/:id ───────────────────────────────────────────────────
 
 export async function GET(
@@ -80,55 +46,9 @@ export async function GET(
   const ctx = await getAuthContext();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const proposal = await prisma.proposal.findFirst({
-    // Admins may open any proposal; everyone else only their own.
-    where: { id, ...proposalAccessWhere(ctx.role, ctx.userId) },
-    include: {
-      template:  { select: { name: true } },
-      events:    { orderBy: { createdAt: "desc" }, take: 50 },
-      revisions: { orderBy: { version: "desc" }, take: 50 },
-    },
-  });
-
+  const proposal = await loadEditorProposal(id, ctx);
   if (!proposal) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  // Resolve names for the author plus anyone who has edited, for the change log.
-  type EventForLog = { id: string; eventType: string; createdAt: Date | string; metadata: unknown };
-  const editorIds = (proposal.events as EventForLog[])
-    .filter((e) => e.eventType === "edited")
-    .map((e) => (e.metadata as { editedBy?: string } | null)?.editedBy)
-    .filter((x): x is string => Boolean(x));
-  const revisionAuthorIds = proposal.revisions.map((revision) => revision.createdBy);
-  const users = await resolveClerkUsers([proposal.createdBy, ...editorIds, ...revisionAuthorIds]);
-  const author = users[proposal.createdBy];
-
-  const events = (proposal.events as EventForLog[]).map((e) => {
-    const editedBy = (e.metadata as { editedBy?: string } | null)?.editedBy;
-    return {
-      ...e,
-      actorName: editedBy ? (users[editedBy]?.name ?? "Unknown user") : null,
-    };
-  });
-
-  const revisions = proposal.revisions.map((revision) => {
-    const content = contentFromSnapshot(revision.snapshot);
-    return {
-      version: revision.version,
-      createdAt: revision.createdAt,
-      createdBy: revision.createdBy,
-      savedByName: users[revision.createdBy]?.name ?? "Unknown user",
-      summary: summarizeProposalContent(content).summary,
-    };
-  });
-
-  return NextResponse.json({
-    ...proposal,
-    revisions,
-    events,
-    authorName: author?.name ?? "Unknown user",
-    authorEmail: author?.email ?? "",
-    viewerIsAuthor: proposal.createdBy === ctx.userId,
-  });
+  return NextResponse.json(proposal);
 }
 
 // ─── PATCH /api/proposals/:id ─────────────────────────────────────────────────
@@ -191,6 +111,7 @@ export async function PATCH(
       const lastRevision = await prisma.proposalRevision.findFirst({
         where:   { proposalId: id },
         orderBy: { version: "desc" },
+        select:  { version: true },
       });
       await prisma.proposalRevision.create({
         data: {
@@ -219,6 +140,7 @@ export async function PATCH(
 
   const proposal = await prisma.proposal.update({
     where: { id },
+    select: { id: true, updatedAt: true, status: true },
     data: {
       ...(title         !== undefined && { title }),
       ...(clientName    !== undefined && { clientName }),
@@ -285,7 +207,10 @@ export async function DELETE(
   const ctx = await getAuthContext();
   if (!ctx) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const existing = await prisma.proposal.findFirst({ where: { id } });
+  const existing = await prisma.proposal.findFirst({
+    where: { id },
+    select: { id: true, createdBy: true },
+  });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // Only the proposal's author may delete it — admins can view and edit any

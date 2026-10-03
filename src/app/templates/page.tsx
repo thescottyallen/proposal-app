@@ -20,7 +20,7 @@ export default function TemplatesPage() {
   const [newName, setNewName] = useState("");
 
   const loadTemplates = () => {
-    fetch("/api/templates")
+    fetch("/api/templates?view=index")
       .then((res) => res.json())
       .then((data) => {
         setTemplates(data);
