@@ -5,10 +5,12 @@
 // ProposalDocument when version === 2.  Legacy proposals (no version field)
 // are migrated lazily on load — nothing in the DB changes until the user saves.
 
-import {
+import type {
+  PaymentChoice,
   ProposalPricingData,
   ProposalPricingSettings,
-  PaymentChoice,
+} from "@/lib/pricing-types";
+import {
   defaultPricingData,
   defaultPricingSettings,
   stripInternalFields,

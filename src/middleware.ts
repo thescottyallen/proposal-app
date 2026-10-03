@@ -1,4 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { clerkMiddlewareOptions } from "@/lib/clerk-config";
 
 // Public routes: proposal view page (for clients) and API event tracking
 const isPublicRoute = createRouteMatcher([
@@ -17,7 +18,7 @@ export default clerkMiddleware(async (auth, request) => {
   if (!isPublicRoute(request)) {
     await auth.protect();
   }
-});
+}, clerkMiddlewareOptions());
 
 export const config = {
   matcher: [
