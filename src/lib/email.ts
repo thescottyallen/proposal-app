@@ -31,6 +31,16 @@ export function singleLine(value: string): string {
   return value.replace(/[\r\n]+/g, " ").trim();
 }
 
+export function acceptanceClientSubject(proposalTitle: string, customSubject?: string): string {
+  const title = singleLine(proposalTitle);
+  if (!customSubject) return `You accepted: ${title}`;
+  return singleLine(customSubject.replace("{title}", title));
+}
+
+export function acceptanceOwnerSubject(proposalTitle: string): string {
+  return `Accepted: ${singleLine(proposalTitle)}`;
+}
+
 interface SendProposalEmailParams extends EmailCopies {
   to:             string | string[];
   /** Contact / To person. Company name must not be passed here. */
@@ -168,9 +178,7 @@ export async function sendAcceptanceConfirmationToClient({
   to, clientName, proposalTitle, signerName, businessName, publicUrl, agreed,
   customSubject, customMessage,
 }: AcceptanceClientParams) {
-  const subject = customSubject
-    ? customSubject.replace("{title}", proposalTitle)
-    : `You accepted: ${proposalTitle}`;
+  const subject = acceptanceClientSubject(proposalTitle, customSubject);
 
   const { error } = await resend.emails.send({
     from:    FROM,
@@ -220,7 +228,7 @@ export async function sendAcceptanceNotificationToOwner({
   const { error } = await resend.emails.send({
     from:    FROM,
     to:      [ownerEmail],
-    subject: `Accepted: ${proposalTitle}`,
+    subject: acceptanceOwnerSubject(proposalTitle),
     html: acceptanceOwnerEmailHtml({
       clientName, signerName, proposalTitle, proposalId, agreed,
     }),

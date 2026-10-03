@@ -9,6 +9,8 @@ import {
   recipientMetadata,
 } from "./email-recipients.ts";
 import {
+  acceptanceClientSubject,
+  acceptanceOwnerSubject,
   openNotificationHtml,
   proposalFollowUpHtml,
   proposalPreviewHtml,
@@ -150,6 +152,22 @@ describe("proposal email access", () => {
     assert.equal(singleLine(title), "Site <b> rebuild");
     assert.equal(singleLine(title).includes("\n"), false);
     assert.equal(singleLine(title).includes("\r"), false);
+    assert.equal(acceptanceClientSubject(title), "You accepted: Site <b> rebuild");
+    assert.equal(
+      acceptanceClientSubject(title, "Thanks for\r\n{title}"),
+      "Thanks for Site <b> rebuild",
+    );
+    assert.equal(acceptanceOwnerSubject(title), "Accepted: Site <b> rebuild");
+    assert.equal(acceptanceClientSubject(title).includes("\n"), false);
+    assert.equal(acceptanceOwnerSubject(title).includes("\r"), false);
+  });
+
+  it("paces preview the same way as send and follow-up", () => {
+    const api = path.join(process.cwd(), "src", "app", "api", "proposals", "[id]");
+    for (const route of ["send", "preview", "followup"]) {
+      const text = readFileSync(path.join(api, route, "route.ts"), "utf8");
+      assert.match(text, /allowProposalEmail\(access\.userId\)/);
+    }
   });
 
   it("limits how often one person can send", () => {

@@ -1,4 +1,4 @@
-/** In-process cap for proposal send and follow-up. One process, one minute. */
+/** In-process cap for proposal send, preview, and follow-up. One process, one minute. */
 export function createEmailRateLimit(max: number, windowMs: number) {
   const hits = new Map<string, number[]>();
 
