@@ -17,6 +17,7 @@ if [[ "$-" == *x* ]]; then
 fi
 set +x
 umask 077
+unset PGSERVICE PGSERVICEFILE PGHOSTADDR || true
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
@@ -54,7 +55,7 @@ clerk_key=""
 on_exit() {
   pg_pw=""
   clerk_key=""
-  unset PGPASSWORD CLERK_SECRET_KEY PGHOST PGPORT PGUSER PGDATABASE PGSSLMODE PGSSLROOTCERT || true
+  unset PGPASSWORD CLERK_SECRET_KEY PGHOST PGPORT PGUSER PGDATABASE PGSSLMODE PGSSLROOTCERT PGSERVICE PGSERVICEFILE PGHOSTADDR || true
   if [[ -n "${TMP_FILES:-}" ]]; then
     # shellcheck disable=SC2086
     rm -f $TMP_FILES || true
@@ -129,7 +130,7 @@ production instance already has a user with no externalId.
 mark-cutover --apply requires freeze-start to exist and be earlier than now,
 a passing forward verify, and the word cutover typed back. It will not replace
 a stamp. To correct one, delete the cutover file and run mark-cutover --apply
-again.
+again. Editing the cutover file by hand bypasses every check.
 
 Freeze notes:
   backup --apply writes freeze-start in UTC.
@@ -475,6 +476,15 @@ epoch_of() {
   fi
 }
 
+format_utc_stamp() {
+  local epoch=$1
+  if date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ >/dev/null 2>&1; then
+    date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ
+  else
+    date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ
+  fi
+}
+
 file_sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
@@ -554,6 +564,7 @@ confirm_database_write() {
   (( APPLY )) || return 0
   db=$(show_database_target)
   host=$(printf '%s' "$PGHOST" | tr '[:upper:]' '[:lower:]')
+  host=${host%.}
   if [[ "$host" =~ ^db\.([a-z0-9]+)\.supabase\.co$ ]]; then
     expected=${BASH_REMATCH[1]}
     prompt="Type the Supabase project ref to confirm"
@@ -633,9 +644,13 @@ row_count_sql() {
 }
 
 seconds_since_stamp() {
-  local file=$1 start now
+  local file=$1 stamp start now roundtrip
   [[ -f "$file" ]] || return 1
-  start=$(epoch_of "$(tr -d '[:space:]' < "$file")")
+  stamp=$(tr -d '[:space:]' < "$file")
+  start=$(epoch_of "$stamp") || return 1
+  [[ "$start" =~ ^[1-9][0-9]*$ ]] || return 1
+  roundtrip=$(format_utc_stamp "$start") || return 1
+  [[ "$roundtrip" == "$stamp" ]] || return 1
   now=$(date -u +%s)
   printf '%s' $((now - start))
 }
@@ -649,18 +664,18 @@ read_cutover_stamp() {
 }
 
 cutover_age_seconds() {
+  local elapsed
   read_cutover_stamp >/dev/null || die "cutover is missing; run mark-cutover --apply when the pk_live_ Production deployment goes live"
-  seconds_since_stamp "$WORKDIR/cutover"
+  elapsed=$(seconds_since_stamp "$WORKDIR/cutover") || die "cutover timestamp could not be read"
+  printf '%s' "$elapsed"
 }
 
 warn_missing_cutover() {
   local elapsed
   [[ -f "$WORKDIR/cutover" ]] && return 0
   [[ -f "$WORKDIR/freeze-start" ]] || return 0
-  set +e
-  elapsed=$(seconds_since_stamp "$WORKDIR/freeze-start")
-  set -e
-  if [[ -n "$elapsed" && "$elapsed" -ge $((6 * 3600)) ]]; then
+  elapsed=$(seconds_since_stamp "$WORKDIR/freeze-start") || die "freeze-start timestamp could not be read"
+  if (( elapsed >= 6 * 3600 )); then
     note "cutover is not recorded, and freeze-start was more than 6 hours ago; run mark-cutover when the pk_live_ Production deployment goes live"
   fi
 }
@@ -672,7 +687,7 @@ rollback_cutoff() {
     return 0
   fi
   start=$(read_cutover_stamp) || die "cutover timestamp could not be read"
-  elapsed=$(seconds_since_stamp "$WORKDIR/cutover")
+  elapsed=$(seconds_since_stamp "$WORKDIR/cutover") || die "cutover timestamp could not be read"
   if (( elapsed >= 86400 )); then
     die "refusing rollback 24 hours after cutover"
   fi
@@ -842,7 +857,7 @@ SQL
   warn_missing_cutover
   lock_note
   if [[ -f "$WORKDIR/export-record" && -f "$WORKDIR/cutover" ]]; then
-    elapsed=$(seconds_since_stamp "$WORKDIR/cutover" || true)
+    elapsed=$(seconds_since_stamp "$WORKDIR/cutover") || die "cutover timestamp could not be read"
     if [[ -n "$elapsed" && "$elapsed" -ge 86400 ]]; then
       note "the user export is past the 24 hour cutoff; run purge-export"
     fi
@@ -916,7 +931,7 @@ SQL
 }
 
 mode_mark_cutover() {
-  local stamp freeze freeze_epoch now typed=""
+  local stamp freeze freeze_epoch freeze_round now typed=""
   stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   note "cutover is the moment the pk_live_ Production deployment goes live"
   if [[ -f "$WORKDIR/cutover" ]]; then
@@ -931,7 +946,10 @@ mode_mark_cutover() {
     [[ -f "$WORKDIR/freeze-start" ]] || die "freeze-start is missing; run backup --apply first"
     freeze=$(tr -d '[:space:]' < "$WORKDIR/freeze-start")
     [[ "$freeze" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || die "freeze-start timestamp could not be read"
-    freeze_epoch=$(epoch_of "$freeze")
+    freeze_epoch=$(epoch_of "$freeze") || die "freeze-start timestamp could not be read"
+    [[ "$freeze_epoch" =~ ^[1-9][0-9]*$ ]] || die "freeze-start timestamp could not be read"
+    freeze_round=$(format_utc_stamp "$freeze_epoch") || die "freeze-start timestamp could not be read"
+    [[ "$freeze_round" == "$freeze" ]] || die "freeze-start timestamp could not be read"
     now=$(date -u +%s)
     if (( freeze_epoch >= now )); then
       die "freeze-start must be earlier than now"

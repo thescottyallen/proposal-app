@@ -116,5 +116,14 @@ describe("preview deployment", () => {
           "postgresql://postgres.previewref:x@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres",
       })
     );
+    assert.throws(
+      () =>
+        assertPreviewConfig({
+          ...preview,
+          DATABASE_URL:
+            "postgresql://postgres.%ZZ:x@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres",
+        }),
+      /username could not be read/
+    );
   });
 });

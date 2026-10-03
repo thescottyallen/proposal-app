@@ -20,7 +20,7 @@ Remap and rollback lock the eight tables that store a Clerk user id. Each lock c
 
 `mark-cutover` records the moment the `pk_live_` Production deployment goes live. That timestamp is not `freeze-start`. `--apply` requires `freeze-start` to exist and be earlier than now, a passing forward `verify`, and the word `cutover` typed back. It will not replace a stamp.
 
-To correct a wrong stamp, delete the `cutover` file in the workdir and run `mark-cutover --apply` again. Those checks run again, and the 24 hour purge and the 14 day cleanup count from the new stamp. Do that before `purge-export` or `cleanup` has used the old stamp.
+To correct a wrong stamp, delete the `cutover` file in the workdir and run `mark-cutover --apply` again. Those checks run again, and the 24 hour purge and the 14 day cleanup count from the new stamp. Do that before `purge-export` or `cleanup` has used the old stamp. Editing the cutover stamp file by hand bypasses every check.
 
 `purge-export` deletes the Clerk user export, which holds password hashes, once 24 hours have passed after `cutover`. It refuses to run when `cutover` has not been recorded. The database dump and the generated `dev_users.csv` and `prod_users.csv` stay until `cleanup`, which is allowed 14 days after the same `cutover`.
 
@@ -49,7 +49,7 @@ Rollback is refused 24 hours after `cutover`, or after the first acceptance sinc
 
 `--apply` prints the database host, database name, eight table counts, and business name, then asks you to type the Supabase project ref. On `db.<ref>.supabase.co` the ref is in the host. On a `*.pooler.supabase.com` host the ref is read from the username `postgres.<ref>`, and the script stops if that username has no ref. Any other host asks for the database name. A Clerk write prints the user count and the first three emails, then asks you to type the user count. A wrong answer stops before anything is changed.
 
-`freeze-check` and `verify` warn when `cutover` is still missing more than 6 hours after `freeze-start`. A cutover file that is not a UTC timestamp stops `purge-export`, `cleanup`, and the rollback cutoff.
+`freeze-check` and `verify` warn when `cutover` is still missing more than 6 hours after `freeze-start`. A cutover file that is not a real UTC timestamp, including an impossible date such as `2026-02-30T00:00:00Z`, stops `purge-export`, `cleanup`, and the rollback cutoff. Editing that file by hand bypasses every check.
 
 ## Re-running a partial import
 

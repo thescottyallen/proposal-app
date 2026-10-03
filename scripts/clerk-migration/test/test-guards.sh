@@ -298,7 +298,7 @@ rm -rf "$SYNC_HOME" "$DOCS_REAL"
 feed() {
   set +e
   feed_out=$(python3 - "$@" <<'PY'
-import os, select, sys, time
+import fcntl, os, select, sys, time
 args = sys.argv[1:]
 sep = args.index("--")
 pairs = [(args[i].encode(), (args[i + 1] + "\n").encode()) for i in range(0, sep, 2)]
@@ -310,21 +310,37 @@ buf = b""
 used = [False] * len(pairs)
 deadline = time.time() + 90
 status = 1
+
+def take(data):
+    global buf
+    if not data:
+        return
+    buf += data
+    for index, (prompt, answer) in enumerate(pairs):
+        if not used[index] and prompt in buf:
+            os.write(master, answer)
+            used[index] = True
+            break
+
 while True:
     try:
         chunk = os.read(master, 4096)
     except OSError:
         chunk = b""
-    if chunk:
-        buf += chunk
-        for index, (prompt, answer) in enumerate(pairs):
-            if not used[index] and prompt in buf:
-                os.write(master, answer)
-                used[index] = True
-                break
+    take(chunk)
     ended, code = os.waitpid(pid, os.WNOHANG)
     if ended == pid:
         status = code >> 8 if os.WIFEXITED(code) else 1
+        flags = fcntl.fcntl(master, fcntl.F_GETFL)
+        fcntl.fcntl(master, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        while True:
+            try:
+                rest = os.read(master, 4096)
+            except OSError:
+                break
+            if not rest:
+                break
+            take(rest)
         break
     if time.time() > deadline:
         os.kill(pid, 15)
@@ -433,10 +449,33 @@ else
   printf '%s\n' "$feed_out" | tail -20
   cat "$SUPA_LOG" || true
 fi
+export PGHOST=aws-0-ap-southeast-2.pooler.supabase.com. PGUSER=postgres.poolref
+: > "$SUPA_LOG"
+feed "Type the Supabase project ref to confirm" "t" -- "$SCRIPT" remap --apply --workdir "$SUPA_WORK"
+if [[ "$feed_code" -ne 0 && "$feed_out" == *not\ confirmed* && "$feed_out" != *"Type the database name"* ]] && ! grep -q REMAP "$SUPA_LOG"; then
+  ok "a trailing dot on a pooler host still asks for the project ref"
+else
+  bad "a trailing dot on a pooler host still asks for the project ref (code=$feed_code)"
+  printf '%s\n' "$feed_out" | tail -20
+  cat "$SUPA_LOG" || true
+fi
 export PGUSER=$SAVED_USER
 export PATH="${PATH#"$SUPA_STUB:"}"
 export PGHOST=$SAVED_HOST PGPORT=$SAVED_PORT
 rm -rf "$SUPA_STUB" "$SUPA_WORK" "$CONFIRM_WORK"
+OVERRIDE_WORK=$(mktemp -d)
+chmod 700 "$OVERRIDE_WORK"
+set +e
+override_out=$(PGSERVICE=nosuch PGSERVICEFILE=/no/such/pg_service.conf PGHOSTADDR=192.0.2.1 "$SCRIPT" remap --workdir "$OVERRIDE_WORK" 2>&1)
+override_code=$?
+set -e
+if [[ "$override_out" == *"database connection accepted"* && "$override_out" == *"schema guard passed"* && "$override_out" != *192.0.2.1* && "$override_out" != *pg_service.conf* ]]; then
+  ok "PGSERVICE, PGSERVICEFILE, and PGHOSTADDR are ignored"
+else
+  bad "PGSERVICE, PGSERVICEFILE, and PGHOSTADDR are ignored (code=$override_code)"
+  printf '%s\n' "$override_out" | tail -20
+fi
+rm -rf "$OVERRIDE_WORK"
 
 echo "== clerk confirmation and sessions"
 export PATH="${HOME}/.bun/bin:${PATH}"
@@ -841,6 +880,33 @@ else
   bad "a malformed cutover stamp stops cleanup (code=$bad_clean_code schema=$schema_bad)"
   printf '%s\n' "$bad_clean" | tail -20
 fi
+for impossible in '2026-13-45T99:99:99Z' '2026-02-30T00:00:00Z'; do
+  printf '%s\n' "$impossible" > "$CUT_WORK/cutover"
+  chmod 600 "$CUT_WORK/cutover"
+  printf 'id,primary_email_address,public_metadata\nuser_devA,a@x.com,{}\n' > "$CUT_WORK/users.csv"
+  printf '%s\n' users.csv > "$CUT_WORK/export-record"
+  set +e
+  imp_purge=$(timeout 20 "$SCRIPT" purge-export --apply --workdir "$CUT_WORK" 2>&1)
+  imp_purge_code=$?
+  set -e
+  if [[ "$imp_purge_code" -ne 0 && "$imp_purge" == *cutover\ timestamp\ could\ not\ be\ read* && -f "$CUT_WORK/users.csv" ]]; then
+    ok "impossible cutover ${impossible} stops purge-export"
+  else
+    bad "impossible cutover ${impossible} stops purge-export (code=$imp_purge_code)"
+    printf '%s\n' "$imp_purge" | tail -20
+  fi
+  set +e
+  imp_clean=$(timeout 20 "$SCRIPT" cleanup --apply --workdir "$CUT_WORK" 2>&1)
+  imp_clean_code=$?
+  set -e
+  schema_imp=$("${PSQL[@]}" -tA -c "SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'clerk_migration'")
+  if [[ "$imp_clean_code" -ne 0 && "$imp_clean" == *cutover\ timestamp\ could\ not\ be\ read* && "$schema_imp" == "1" && -d "$CUT_WORK" ]]; then
+    ok "impossible cutover ${impossible} stops cleanup"
+  else
+    bad "impossible cutover ${impossible} stops cleanup (code=$imp_clean_code schema=$schema_imp)"
+    printf '%s\n' "$imp_clean" | tail -20
+  fi
+done
 rm -rf "$CUT_WORK"
 
 echo "== missing cutover warning"
@@ -905,6 +971,16 @@ else
   bad "a malformed cutover stamp stops rollback before invitations are revoked (code=$feed_code)"
   printf '%s\n' "$feed_out" | tail -20
 fi
+for impossible in '2026-13-45T99:99:99Z' '2026-02-30T00:00:00Z'; do
+  printf '%s\n' "$impossible" > "$ROLL2/cutover"
+  feed "Clerk secret key" "sk_live_localtest" -- "$SCRIPT" rollback --apply --workdir "$ROLL2"
+  if [[ "$feed_code" -ne 0 && "$feed_out" == *cutover\ timestamp\ could\ not\ be\ read* && "$feed_out" != *Type\ the\ database\ name* && "$feed_out" != *revoked* ]]; then
+    ok "impossible cutover ${impossible} stops rollback before invitations are revoked"
+  else
+    bad "impossible cutover ${impossible} stops rollback before invitations are revoked (code=$feed_code)"
+    printf '%s\n' "$feed_out" | tail -20
+  fi
+done
 "${PSQL[@]}" -c "INSERT INTO proposals(id,title,client_name,client_email,content,public_id,created_by,updated_at) VALUES ('p_cut','P','A','a@a','{}','pub_cut','user_devA',now())" >/dev/null
 "${PSQL[@]}" -c "INSERT INTO proposal_events(id,proposal_id,event_type,metadata) VALUES ('e_cut','p_cut','accepted','{\"signerName\":\"x\"}')" >/dev/null
 date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ > "$ROLL2/cutover"

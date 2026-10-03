@@ -31,7 +31,12 @@ export function databaseHost(databaseUrl: string): string {
 
 /** Supabase pooler usernames are `postgres.<project ref>`. */
 function poolerProjectRef(databaseUrl: string): string {
-  const username = decodeURIComponent(new URL(databaseUrl).username).toLowerCase();
+  let username: string;
+  try {
+    username = decodeURIComponent(new URL(databaseUrl).username).toLowerCase();
+  } catch {
+    throw new Error("Preview DATABASE_URL username could not be read");
+  }
   const match = /^postgres\.([a-z0-9]+)$/.exec(username);
   return match?.[1] ?? "";
 }
