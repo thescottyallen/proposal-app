@@ -8,6 +8,8 @@ import {
   acceptanceUpdateFilter,
   expiryUpdateWhere,
   parseClientAbn,
+  parseClientIncluded,
+  parsePaymentChoices,
   parseSignerName,
   settleAcceptance,
   statusAfterUpdate,
@@ -73,11 +75,32 @@ describe("accepting a proposal", () => {
     assert.equal(parseSignerName("A".repeat(SIGNER_NAME_MAX)).ok, true);
 
     assert.deepEqual(parseClientAbn(null), { ok: true, clientAbn: null });
-    assert.equal(parseClientAbn("").ok, false);
+    assert.deepEqual(parseClientAbn(""), { ok: true, clientAbn: null });
+    assert.deepEqual(parseClientAbn("   "), { ok: true, clientAbn: null });
     assert.equal(parseClientAbn(123).ok, false);
     assert.equal(parseClientAbn("1".repeat(CLIENT_ABN_MAX + 1)).ok, false);
     const abn = parseClientAbn("  12 345 678 901  ");
     assert.equal(abn.ok, true);
     if (abn.ok) assert.equal(abn.clientAbn, "12 345 678 901");
+  });
+
+  it("accepts included items and payment choices only as plain maps", () => {
+    assert.deepEqual(parseClientIncluded(undefined), { ok: true, clientIncluded: {} });
+    assert.deepEqual(parseClientIncluded({ line: true, other: false }), {
+      ok: true,
+      clientIncluded: { line: true, other: false },
+    });
+    assert.equal(parseClientIncluded(["yes"]).ok, false);
+    assert.equal(parseClientIncluded("yes").ok, false);
+    assert.equal(parseClientIncluded({ line: "yes" }).ok, false);
+
+    assert.deepEqual(parsePaymentChoices(null), { ok: true, paymentChoices: {} });
+    assert.deepEqual(parsePaymentChoices({ price: "monthly" }), {
+      ok: true,
+      paymentChoices: { price: "monthly" },
+    });
+    assert.equal(parsePaymentChoices(["monthly"]).ok, false);
+    assert.equal(parsePaymentChoices({ price: 1 }).ok, false);
+    assert.equal(parsePaymentChoices({ price: { option: "monthly" } }).ok, false);
   });
 });

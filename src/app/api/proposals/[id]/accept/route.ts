@@ -23,6 +23,8 @@ import {
   acceptanceGuard,
   acceptanceUpdateFilter,
   parseClientAbn,
+  parseClientIncluded,
+  parsePaymentChoices,
   parseSignerName,
   settleAcceptance,
 } from "@/lib/proposal-accept";
@@ -58,8 +60,15 @@ export async function POST(
     );
   }
 
-  const body = await request.json();
-  const record = body && typeof body === "object" ? body as Record<string, unknown> : {};
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+  const record = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
   const parsedName = parseSignerName(record.signerName);
   if (!parsedName.ok) {
     return NextResponse.json({ error: parsedName.error }, { status: 400 });
@@ -68,10 +77,18 @@ export async function POST(
   if (!parsedAbn.ok) {
     return NextResponse.json({ error: parsedAbn.error }, { status: 400 });
   }
+  const parsedIncluded = parseClientIncluded(record.clientIncluded);
+  if (!parsedIncluded.ok) {
+    return NextResponse.json({ error: parsedIncluded.error }, { status: 400 });
+  }
+  const parsedPayments = parsePaymentChoices(record.paymentChoices);
+  if (!parsedPayments.ok) {
+    return NextResponse.json({ error: parsedPayments.error }, { status: 400 });
+  }
   const signerName = parsedName.signerName;
   const clientAbn = parsedAbn.clientAbn;
-  const clientIncluded = record.clientIncluded as Record<string, boolean> | undefined;
-  const paymentChoices = record.paymentChoices as Record<string, unknown> | undefined;
+  const clientIncluded = parsedIncluded.clientIncluded;
+  const paymentChoices = parsedPayments.paymentChoices;
 
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??

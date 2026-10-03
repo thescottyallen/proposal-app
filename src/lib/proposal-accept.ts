@@ -79,7 +79,7 @@ export function parseSignerName(value: unknown):
   return { ok: true, signerName };
 }
 
-/** Blank or omitted ABN is left unset. A value must be text, within the cap. */
+/** Blank, whitespace-only, or omitted ABN is left unset. A value must be text, within the cap. */
 export function parseClientAbn(value: unknown):
   | { ok: true; clientAbn: string | null }
   | { ok: false; error: string } {
@@ -88,11 +88,49 @@ export function parseClientAbn(value: unknown):
     return { ok: false, error: "ABN must be text." };
   }
   const clientAbn = value.trim();
-  if (!clientAbn) {
-    return { ok: false, error: "ABN is required when it is included." };
-  }
+  if (!clientAbn) return { ok: true, clientAbn: null };
   if (clientAbn.length > CLIENT_ABN_MAX) {
     return { ok: false, error: `ABN must be ${CLIENT_ABN_MAX} characters or fewer.` };
   }
   return { ok: true, clientAbn };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Optional map of item id to included or not. Missing means no choices were sent. */
+export function parseClientIncluded(value: unknown):
+  | { ok: true; clientIncluded: Record<string, boolean> }
+  | { ok: false; error: string } {
+  if (value == null) return { ok: true, clientIncluded: {} };
+  if (!isPlainRecord(value)) {
+    return { ok: false, error: "Included items must be a set of choices." };
+  }
+  const clientIncluded: Record<string, boolean> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item !== "boolean") {
+      return { ok: false, error: "Each included item must be yes or no." };
+    }
+    clientIncluded[key] = item;
+  }
+  return { ok: true, clientIncluded };
+}
+
+/** Optional map of pricing block id to a payment choice. Missing means none were sent. */
+export function parsePaymentChoices(value: unknown):
+  | { ok: true; paymentChoices: Record<string, string> }
+  | { ok: false; error: string } {
+  if (value == null) return { ok: true, paymentChoices: {} };
+  if (!isPlainRecord(value)) {
+    return { ok: false, error: "Payment choices must be a set of choices." };
+  }
+  const paymentChoices: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item !== "string") {
+      return { ok: false, error: "Each payment choice must be text." };
+    }
+    paymentChoices[key] = item;
+  }
+  return { ok: true, paymentChoices };
 }
