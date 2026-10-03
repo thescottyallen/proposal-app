@@ -119,10 +119,17 @@ PGSSLMODE=verify-full and PGSSLROOTCERT points at a CA file.
 
 Before --apply changes the database, the script prints the host, the database
 name, the eight table counts and the business name, then asks you to type the
-Supabase project ref (the label in db.<ref>.supabase.co). Any other host asks
-for the database name instead. Before --apply changes Clerk, it prints the
-user count and the first three emails, then asks you to type the user count.
-Import refuses when the production instance already has a user with no externalId.
+Supabase project ref. On db.<ref>.supabase.co the ref is in the host. On a
+*.pooler.supabase.com host the ref is the username postgres.<ref>; the script
+stops if that ref cannot be read. Any other host asks for the database name.
+Before --apply changes Clerk, it prints the user count and the first three
+emails, then asks you to type the user count. Import refuses when the
+production instance already has a user with no externalId.
+
+mark-cutover --apply requires freeze-start to exist and be earlier than now,
+a passing forward verify, and the word cutover typed back. It will not replace
+a stamp. To correct one, delete the cutover file and run mark-cutover --apply
+again.
 
 Freeze notes:
   backup --apply writes freeze-start in UTC.
@@ -399,7 +406,10 @@ prepare_db() {
 
 run_psql() {
   if [[ -n "$pg_pw" ]]; then
-    env -u CLERK_SECRET_KEY PGPASSWORD="$pg_pw" psql -X -v ON_ERROR_STOP=1 "$@"
+    (
+      unset CLERK_SECRET_KEY
+      PGPASSWORD="$pg_pw" exec psql -X -v ON_ERROR_STOP=1 "$@"
+    )
   else
     env -u CLERK_SECRET_KEY -u PGPASSWORD psql -X -v ON_ERROR_STOP=1 "$@"
   fi
@@ -407,7 +417,10 @@ run_psql() {
 
 run_pg_dump() {
   if [[ -n "$pg_pw" ]]; then
-    env -u CLERK_SECRET_KEY PGPASSWORD="$pg_pw" pg_dump "$@"
+    (
+      unset CLERK_SECRET_KEY
+      PGPASSWORD="$pg_pw" exec pg_dump "$@"
+    )
   else
     env -u CLERK_SECRET_KEY -u PGPASSWORD pg_dump "$@"
   fi
@@ -509,7 +522,10 @@ bun_plain() {
 }
 
 bun_clerk() {
-  env -u PGPASSWORD CLERK_SECRET_KEY="$clerk_key" bun "$@"
+  (
+    unset PGPASSWORD
+    CLERK_SECRET_KEY="$clerk_key" exec bun "$@"
+  )
 }
 
 show_database_target() {
@@ -523,12 +539,26 @@ show_database_target() {
   printf '%s' "$db"
 }
 
+pooler_project_ref() {
+  local user
+  user=$(printf '%s' "$PGUSER" | tr '[:upper:]' '[:lower:]')
+  if [[ "$user" =~ ^postgres\.([a-z0-9]+)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
 confirm_database_write() {
-  local db expected prompt typed=""
+  local db expected prompt typed="" host
   (( APPLY )) || return 0
   db=$(show_database_target)
-  if [[ "$PGHOST" =~ ^db\.([a-z0-9]+)\.supabase\.co$ ]]; then
+  host=$(printf '%s' "$PGHOST" | tr '[:upper:]' '[:lower:]')
+  if [[ "$host" =~ ^db\.([a-z0-9]+)\.supabase\.co$ ]]; then
     expected=${BASH_REMATCH[1]}
+    prompt="Type the Supabase project ref to confirm"
+  elif [[ "$host" == *.pooler.supabase.com ]]; then
+    expected=$(pooler_project_ref) || die "could not read the Supabase project ref from the pooler username postgres.<ref>"
     prompt="Type the Supabase project ref to confirm"
   else
     expected=$db
@@ -610,8 +640,29 @@ seconds_since_stamp() {
   printf '%s' $((now - start))
 }
 
-require_cutover() {
-  [[ -f "$WORKDIR/cutover" ]] || die "cutover is missing; run mark-cutover --apply when the pk_live_ Production deployment goes live"
+read_cutover_stamp() {
+  local start
+  [[ -f "$WORKDIR/cutover" ]] || return 1
+  start=$(tr -d '[:space:]' < "$WORKDIR/cutover")
+  [[ "$start" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || die "cutover timestamp could not be read"
+  printf '%s' "$start"
+}
+
+cutover_age_seconds() {
+  read_cutover_stamp >/dev/null || die "cutover is missing; run mark-cutover --apply when the pk_live_ Production deployment goes live"
+  seconds_since_stamp "$WORKDIR/cutover"
+}
+
+warn_missing_cutover() {
+  local elapsed
+  [[ -f "$WORKDIR/cutover" ]] && return 0
+  [[ -f "$WORKDIR/freeze-start" ]] || return 0
+  set +e
+  elapsed=$(seconds_since_stamp "$WORKDIR/freeze-start")
+  set -e
+  if [[ -n "$elapsed" && "$elapsed" -ge $((6 * 3600)) ]]; then
+    note "cutover is not recorded, and freeze-start was more than 6 hours ago; run mark-cutover when the pk_live_ Production deployment goes live"
+  fi
 }
 
 rollback_cutoff() {
@@ -620,13 +671,12 @@ rollback_cutoff() {
     note "cutover is not recorded, so the rollback cutoff has not started"
     return 0
   fi
+  start=$(read_cutover_stamp) || die "cutover timestamp could not be read"
   elapsed=$(seconds_since_stamp "$WORKDIR/cutover")
   if (( elapsed >= 86400 )); then
     die "refusing rollback 24 hours after cutover"
   fi
-  start=$(tr -d '[:space:]' < "$WORKDIR/cutover")
-  [[ "$start" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || die "cutover timestamp could not be read"
-  count=$(psql_value -c "SELECT count(*) FROM public.proposal_events WHERE event_type = 'accepted' AND created_at >= timestamptz '${start}'")
+  count=$(psql_value -c "SELECT count(*) FROM public.proposal_events WHERE event_type = 'accepted' AND created_at >= (timestamptz '${start}' AT TIME ZONE 'UTC')")
   count=${count//[[:space:]]/}
   if [[ "$count" != "0" ]]; then
     die "refusing rollback after the first acceptance since cutover"
@@ -692,7 +742,8 @@ mode_import() {
     local status=0
     (
       cd "$TOOL_DIR"
-      env -u PGPASSWORD CLERK_SECRET_KEY="$clerk_key" bun migrate -y -t clerk -f "$EXPORT"
+      unset PGPASSWORD
+      CLERK_SECRET_KEY="$clerk_key" exec bun migrate -y -t clerk -f "$EXPORT"
     ) 2>&1 | tee -a "$LOG" >&2 || status=$?
     if [[ -d "$TOOL_DIR/logs" ]]; then
       local dest
@@ -764,6 +815,7 @@ SQL
 mode_verify() {
   local direction=forward
   prepare_db
+  warn_missing_cutover
   if (( REVERSE )); then
     direction=reverse
   fi
@@ -787,6 +839,7 @@ WHERE e.event_type = 'accepted'
 ORDER BY e.created_at;
 SQL
 )" -v "freeze_start=${start}"
+  warn_missing_cutover
   lock_note
   if [[ -f "$WORKDIR/export-record" && -f "$WORKDIR/cutover" ]]; then
     elapsed=$(seconds_since_stamp "$WORKDIR/cutover" || true)
@@ -863,7 +916,7 @@ SQL
 }
 
 mode_mark_cutover() {
-  local stamp
+  local stamp freeze freeze_epoch now typed=""
   stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   note "cutover is the moment the pk_live_ Production deployment goes live"
   if [[ -f "$WORKDIR/cutover" ]]; then
@@ -871,9 +924,29 @@ mode_mark_cutover() {
     if (( APPLY )); then
       die "refusing to replace a recorded cutover"
     fi
+    note "to correct it, delete the cutover file and run mark-cutover --apply again"
     return 0
   fi
   if (( APPLY )); then
+    [[ -f "$WORKDIR/freeze-start" ]] || die "freeze-start is missing; run backup --apply first"
+    freeze=$(tr -d '[:space:]' < "$WORKDIR/freeze-start")
+    [[ "$freeze" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || die "freeze-start timestamp could not be read"
+    freeze_epoch=$(epoch_of "$freeze")
+    now=$(date -u +%s)
+    if (( freeze_epoch >= now )); then
+      die "freeze-start must be earlier than now"
+    fi
+    note "freeze-start ${freeze}"
+    prepare_db
+    if ! run_sql "SELECT clerk_migration.verify('forward');"; then
+      die "forward verify failed; cutover was not recorded"
+    fi
+    note "forward verify passed"
+    [[ -r /dev/tty ]] || die "a terminal is required to confirm cutover"
+    read -r -p "Type cutover to confirm the pk_live_ Production deployment is live: " typed </dev/tty
+    if [[ "$typed" != "cutover" ]]; then
+      die "cutover was not confirmed; nothing was recorded"
+    fi
     printf '%s\n' "$stamp" > "$WORKDIR/cutover"
     chmod 600 "$WORKDIR/cutover"
     note "wrote cutover ${stamp}"
@@ -884,9 +957,8 @@ mode_mark_cutover() {
 
 mode_purge_export() {
   local elapsed rel path real
-  require_cutover
   [[ -f "$WORKDIR/export-record" ]] || die "no export has been recorded"
-  elapsed=$(seconds_since_stamp "$WORKDIR/cutover")
+  elapsed=$(cutover_age_seconds)
   while IFS= read -r rel; do
     [[ -n "$rel" ]] || continue
     path="${WORKDIR}/${rel}"
@@ -915,8 +987,7 @@ mode_purge_export() {
 mode_cleanup() {
   local elapsed target
   prepare_db
-  require_cutover
-  elapsed=$(seconds_since_stamp "$WORKDIR/cutover")
+  elapsed=$(cutover_age_seconds)
   note "would drop schema clerk_migration"
   note "would delete workdir ${WORKDIR}"
   if [[ -f "$WORKDIR/backup.dump" ]]; then

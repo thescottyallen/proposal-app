@@ -18,7 +18,9 @@ Scotty runs it on his own machine. The script prompts for secrets with `read -rs
 
 Remap and rollback lock the eight tables that store a Clerk user id. Each lock can wait up to 10 seconds, so the worst case is about 80 seconds. Reads keep working. Writes wait until the transaction ends.
 
-`mark-cutover` records the moment the `pk_live_` Production deployment goes live. That timestamp is not `freeze-start`.
+`mark-cutover` records the moment the `pk_live_` Production deployment goes live. That timestamp is not `freeze-start`. `--apply` requires `freeze-start` to exist and be earlier than now, a passing forward `verify`, and the word `cutover` typed back. It will not replace a stamp.
+
+To correct a wrong stamp, delete the `cutover` file in the workdir and run `mark-cutover --apply` again. Those checks run again, and the 24 hour purge and the 14 day cleanup count from the new stamp. Do that before `purge-export` or `cleanup` has used the old stamp.
 
 `purge-export` deletes the Clerk user export, which holds password hashes, once 24 hours have passed after `cutover`. It refuses to run when `cutover` has not been recorded. The database dump and the generated `dev_users.csv` and `prod_users.csv` stay until `cleanup`, which is allowed 14 days after the same `cutover`.
 
@@ -39,13 +41,15 @@ Rollback is refused 24 hours after `cutover`, or after the first acceptance sinc
 | `demote-dev-admins --keep` | Sets other development admins to `member`, merging only the role key. |
 | `restore-dev-roles --export` | Puts development roles back. Users missing from the export are listed and left alone. |
 | `rollback [--orphans-to]` | Checks the reverse remap, then revokes pending production invitations, then remaps ids back. Refuses 24 hours after `cutover`, or after the first acceptance since `cutover`. |
-| `mark-cutover` | Records the UTC time the `pk_live_` Production deployment goes live. |
+| `mark-cutover` | Records the UTC time the `pk_live_` Production deployment goes live, after `freeze-start`, a passing forward verify, and a typed confirmation. |
 | `purge-export` | Deletes the user export 24 hours after `cutover`. Refuses when `cutover` is missing. |
 | `cleanup` | Drops the `clerk_migration` schema and deletes the workdir, 14 days after `cutover`. |
 
 `preflight`, `remap`, and `rollback` stop when the latest applied Prisma migration is not `20261002041000_add_proposal_list_indexes`, or when `prisma/schema.prisma` differs from commit `9acabc8`. The error says the user-id column list must be re-checked before the script is run.
 
-`--apply` prints the database host, database name, eight table counts, and business name, then asks you to type the Supabase project ref (`db.<ref>.supabase.co`) or, on any other host, the database name. A Clerk write prints the user count and the first three emails, then asks you to type the user count. A wrong answer stops before anything is changed.
+`--apply` prints the database host, database name, eight table counts, and business name, then asks you to type the Supabase project ref. On `db.<ref>.supabase.co` the ref is in the host. On a `*.pooler.supabase.com` host the ref is read from the username `postgres.<ref>`, and the script stops if that username has no ref. Any other host asks for the database name. A Clerk write prints the user count and the first three emails, then asks you to type the user count. A wrong answer stops before anything is changed.
+
+`freeze-check` and `verify` warn when `cutover` is still missing more than 6 hours after `freeze-start`. A cutover file that is not a UTC timestamp stops `purge-export`, `cleanup`, and the rollback cutoff.
 
 ## Re-running a partial import
 
@@ -57,7 +61,7 @@ Import will not start when the production instance already has a user with no `e
 
 ## Preview deploys
 
-Preview builds fail without Clerk development keys (`pk_test_` and `sk_test_`) and a `DATABASE_URL`. Set `PRODUCTION_DB_HOST` to the production database host or Supabase project ref. That value is not a secret and is not a connection string. The host parsed from `DATABASE_URL` must be different. See `SETUP.md`.
+Preview builds fail without Clerk development keys (`pk_test_` and `sk_test_`) and a `DATABASE_URL`. Set `PRODUCTION_DB_HOST` to the production database host or Supabase project ref. That value is not a secret and is not a connection string. The host parsed from `DATABASE_URL` must be different, including a pooler URL whose username is `postgres.<ref>`. See `SETUP.md`.
 
 ## Tests
 

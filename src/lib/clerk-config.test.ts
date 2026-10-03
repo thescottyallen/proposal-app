@@ -90,5 +90,31 @@ describe("preview deployment", () => {
         }),
       /non-production database/
     );
+    assert.throws(
+      () =>
+        assertPreviewConfig({
+          ...preview,
+          DATABASE_URL:
+            "postgresql://postgres.prodref:x@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres",
+        }),
+      /non-production database/
+    );
+    assert.throws(
+      () =>
+        assertPreviewConfig({
+          ...preview,
+          PRODUCTION_DB_HOST: "db.prodref.supabase.co",
+          DATABASE_URL:
+            "postgresql://postgres.prodref:x@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres",
+        }),
+      /non-production database/
+    );
+    assert.doesNotThrow(() =>
+      assertPreviewConfig({
+        ...preview,
+        DATABASE_URL:
+          "postgresql://postgres.previewref:x@aws-0-ap-southeast-2.pooler.supabase.com:6543/postgres",
+      })
+    );
   });
 });

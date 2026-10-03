@@ -29,12 +29,28 @@ export function databaseHost(databaseUrl: string): string {
   return url.hostname.toLowerCase();
 }
 
-/** True when the preview database host is the production host or contains its project ref. */
+/** Supabase pooler usernames are `postgres.<project ref>`. */
+function poolerProjectRef(databaseUrl: string): string {
+  const username = decodeURIComponent(new URL(databaseUrl).username).toLowerCase();
+  const match = /^postgres\.([a-z0-9]+)$/.exec(username);
+  return match?.[1] ?? "";
+}
+
+function markerProjectRef(marker: string): string {
+  const direct = /^db\.([a-z0-9]+)\.supabase\.co$/.exec(marker);
+  if (direct) return direct[1];
+  if (!marker.includes(".")) return marker;
+  return "";
+}
+
+/** True when the preview database is the production host or the production project ref. */
 export function previewPointsAtProduction(databaseUrl: string, productionHost: string): boolean {
   const host = databaseHost(databaseUrl);
   const marker = productionHost.trim().toLowerCase();
   if (!marker) return false;
   if (host === marker) return true;
+  const ref = poolerProjectRef(databaseUrl);
+  if (ref && (ref === marker || ref === markerProjectRef(marker))) return true;
   if (marker.includes(".")) return false;
   return host.startsWith(`${marker}.`) || host.includes(`.${marker}.`);
 }

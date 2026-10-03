@@ -403,6 +403,37 @@ else
   printf '%s\n' "$feed_out" | tail -20
   cat "$SUPA_LOG" || true
 fi
+SAVED_USER=$PGUSER
+export PGHOST=aws-0-ap-southeast-2.pooler.supabase.com PGUSER=postgres.poolref
+: > "$SUPA_LOG"
+feed "Type the Supabase project ref to confirm" "t" -- "$SCRIPT" remap --apply --workdir "$SUPA_WORK"
+if [[ "$feed_code" -ne 0 && "$feed_out" == *not\ confirmed* && "$feed_out" != *"Type the database name"* ]] && ! grep -q REMAP "$SUPA_LOG"; then
+  ok "a pooler host asks for the ref in the username, not the database name"
+else
+  bad "a pooler host asks for the ref in the username, not the database name (code=$feed_code)"
+  printf '%s\n' "$feed_out" | tail -20
+  cat "$SUPA_LOG" || true
+fi
+: > "$SUPA_LOG"
+feed "Type the Supabase project ref to confirm" "poolref" -- "$SCRIPT" remap --apply --workdir "$SUPA_WORK"
+if [[ "$feed_code" -eq 0 ]] && grep -q REMAP "$SUPA_LOG"; then
+  ok "typing the pooler project ref allows the write"
+else
+  bad "typing the pooler project ref allows the write (code=$feed_code)"
+  printf '%s\n' "$feed_out" | tail -20
+  cat "$SUPA_LOG" || true
+fi
+export PGUSER=postgres
+: > "$SUPA_LOG"
+feed "Type the database name to confirm" "postgres" -- "$SCRIPT" remap --apply --workdir "$SUPA_WORK"
+if [[ "$feed_code" -ne 0 && "$feed_out" == *could\ not\ read\ the\ Supabase\ project\ ref* && "$feed_out" != *"Type the database name"* ]] && ! grep -q REMAP "$SUPA_LOG"; then
+  ok "a pooler username without a ref stops the write"
+else
+  bad "a pooler username without a ref stops the write (code=$feed_code)"
+  printf '%s\n' "$feed_out" | tail -20
+  cat "$SUPA_LOG" || true
+fi
+export PGUSER=$SAVED_USER
 export PATH="${PATH#"$SUPA_STUB:"}"
 export PGHOST=$SAVED_HOST PGPORT=$SAVED_PORT
 rm -rf "$SUPA_STUB" "$SUPA_WORK" "$CONFIRM_WORK"
@@ -651,17 +682,66 @@ else
   bad "mark-cutover dry-run records nothing (code=$mark_code)"
   printf '%s\n' "$mark_out" | tail -20
 fi
-"$SCRIPT" mark-cutover --apply --workdir "$CUT_WORK" >/dev/null
+set +e
+bare_out=$("$SCRIPT" mark-cutover --apply --workdir "$CUT_WORK" 2>&1)
+bare_code=$?
+set -e
+if [[ "$bare_code" -ne 0 && ! -f "$CUT_WORK/cutover" && "$bare_out" == *freeze-start\ is\ missing* ]]; then
+  ok "mark-cutover --apply requires freeze-start"
+else
+  bad "mark-cutover --apply requires freeze-start (code=$bare_code)"
+  printf '%s\n' "$bare_out" | tail -20
+fi
+date -u -d '2 hours' +%Y-%m-%dT%H:%M:%SZ > "$CUT_WORK/freeze-start"
+set +e
+future_out=$("$SCRIPT" mark-cutover --apply --workdir "$CUT_WORK" 2>&1)
+future_code=$?
+set -e
+if [[ "$future_code" -ne 0 && ! -f "$CUT_WORK/cutover" && "$future_out" == *earlier\ than\ now* ]]; then
+  ok "mark-cutover --apply refuses a freeze-start that is not in the past"
+else
+  bad "mark-cutover --apply refuses a freeze-start that is not in the past (code=$future_code)"
+  printf '%s\n' "$future_out" | tail -20
+fi
+date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%SZ > "$CUT_WORK/freeze-start"
+"${PSQL[@]}" -c "INSERT INTO clerk_migration.id_map(old_id,new_id,email) VALUES ('user_old','user_new','a@x.com')" >/dev/null
+"${PSQL[@]}" -c "INSERT INTO clients(id,name,created_by,updated_at) VALUES ('c_verify','V','user_old',now())" >/dev/null
+set +e
+verify_out=$("$SCRIPT" mark-cutover --apply --workdir "$CUT_WORK" 2>&1)
+verify_code=$?
+set -e
+if [[ "$verify_code" -ne 0 && ! -f "$CUT_WORK/cutover" && "$verify_out" == *forward\ verify\ failed* ]]; then
+  ok "mark-cutover --apply requires a passing forward verify"
+else
+  bad "mark-cutover --apply requires a passing forward verify (code=$verify_code)"
+  printf '%s\n' "$verify_out" | tail -20
+fi
+"${PSQL[@]}" -c "DELETE FROM clients WHERE id='c_verify'" >/dev/null
+"${PSQL[@]}" -c "DELETE FROM clerk_migration.id_map WHERE old_id='user_old'" >/dev/null
+feed "Type cutover to confirm" "nope" -- "$SCRIPT" mark-cutover --apply --workdir "$CUT_WORK"
+if [[ "$feed_code" -ne 0 && ! -f "$CUT_WORK/cutover" && "$feed_out" == *not\ confirmed* ]]; then
+  ok "mark-cutover --apply requires a typed confirmation"
+else
+  bad "mark-cutover --apply requires a typed confirmation (code=$feed_code)"
+  printf '%s\n' "$feed_out" | tail -20
+fi
+feed "Type cutover to confirm" "cutover" -- "$SCRIPT" mark-cutover --apply --workdir "$CUT_WORK"
 recorded=$(tr -d '[:space:]' < "$CUT_WORK/cutover")
 mode=$(stat -c '%a' "$CUT_WORK/cutover")
+if [[ "$feed_code" -eq 0 && "$recorded" == *Z && "$mode" == "600" ]]; then
+  ok "mark-cutover --apply writes the go-live time once the checks pass"
+else
+  bad "mark-cutover --apply writes the go-live time once the checks pass (code=$feed_code mode=$mode)"
+  printf '%s\n' "$feed_out" | tail -20
+fi
 set +e
 again_out=$("$SCRIPT" mark-cutover --apply --workdir "$CUT_WORK" 2>&1)
 again_code=$?
 set -e
-if [[ "$again_code" -ne 0 && "$again_out" == *refusing\ to\ replace\ a\ recorded\ cutover* && "$(tr -d '[:space:]' < "$CUT_WORK/cutover")" == "$recorded" && "$recorded" == *Z && "$mode" == "600" ]]; then
-  ok "mark-cutover --apply writes the go-live time once"
+if [[ "$again_code" -ne 0 && "$again_out" == *refusing\ to\ replace\ a\ recorded\ cutover* && "$(tr -d '[:space:]' < "$CUT_WORK/cutover")" == "$recorded" ]]; then
+  ok "mark-cutover --apply will not replace a recorded stamp"
 else
-  bad "mark-cutover --apply writes the go-live time once (code=$again_code mode=$mode)"
+  bad "mark-cutover --apply will not replace a recorded stamp (code=$again_code)"
   printf '%s\n' "$again_out" | tail -20
 fi
 
@@ -736,7 +816,75 @@ else
   bad "cleanup dry-run lists the drop once 14 days have passed since cutover (code=$clean_due_code)"
   printf '%s\n' "$clean_due" | tail -20
 fi
+printf '%s\n' 'not-a-timestamp' > "$CUT_WORK/cutover"
+chmod 600 "$CUT_WORK/cutover"
+printf 'id,primary_email_address,public_metadata\nuser_devA,a@x.com,{}\n' > "$CUT_WORK/users.csv"
+printf '%s\n' users.csv > "$CUT_WORK/export-record"
+set +e
+bad_purge=$("$SCRIPT" purge-export --apply --workdir "$CUT_WORK" 2>&1)
+bad_purge_code=$?
+set -e
+if [[ "$bad_purge_code" -ne 0 && "$bad_purge" == *cutover\ timestamp\ could\ not\ be\ read* && -f "$CUT_WORK/users.csv" ]]; then
+  ok "a malformed cutover stamp stops purge-export"
+else
+  bad "a malformed cutover stamp stops purge-export (code=$bad_purge_code)"
+  printf '%s\n' "$bad_purge" | tail -20
+fi
+set +e
+bad_clean=$("$SCRIPT" cleanup --apply --workdir "$CUT_WORK" 2>&1)
+bad_clean_code=$?
+set -e
+schema_bad=$("${PSQL[@]}" -tA -c "SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'clerk_migration'")
+if [[ "$bad_clean_code" -ne 0 && "$bad_clean" == *cutover\ timestamp\ could\ not\ be\ read* && "$schema_bad" == "1" && -d "$CUT_WORK" ]]; then
+  ok "a malformed cutover stamp stops cleanup"
+else
+  bad "a malformed cutover stamp stops cleanup (code=$bad_clean_code schema=$schema_bad)"
+  printf '%s\n' "$bad_clean" | tail -20
+fi
 rm -rf "$CUT_WORK"
+
+echo "== missing cutover warning"
+WARN_WORK=$(mktemp -d)
+chmod 700 "$WARN_WORK"
+date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ > "$WARN_WORK/freeze-start"
+set +e
+recent=$("$SCRIPT" freeze-check --workdir "$WARN_WORK" 2>&1)
+recent_code=$?
+recent_verify=$("$SCRIPT" verify --workdir "$WARN_WORK" 2>&1)
+recent_verify_code=$?
+set -e
+if [[ "$recent_code" -eq 0 && "$recent" != *more\ than\ 6\ hours\ ago* ]]; then
+  ok "a recent freeze-start does not warn about a missing cutover"
+else
+  bad "a recent freeze-start does not warn about a missing cutover (code=$recent_code)"
+  printf '%s\n' "$recent" | tail -20
+fi
+if [[ "$recent_verify_code" -eq 0 && "$recent_verify" != *more\ than\ 6\ hours\ ago* ]]; then
+  ok "verify stays quiet when freeze-start is recent"
+else
+  bad "verify stays quiet when freeze-start is recent (code=$recent_verify_code)"
+  printf '%s\n' "$recent_verify" | tail -20
+fi
+date -u -d '7 hours ago' +%Y-%m-%dT%H:%M:%SZ > "$WARN_WORK/freeze-start"
+set +e
+late=$("$SCRIPT" freeze-check --workdir "$WARN_WORK" 2>&1)
+late_code=$?
+late_verify=$("$SCRIPT" verify --workdir "$WARN_WORK" 2>&1)
+late_verify_code=$?
+set -e
+if [[ "$late_code" -eq 0 && "$late" == *more\ than\ 6\ hours\ ago* ]]; then
+  ok "freeze-check warns when cutover is missing more than 6 hours after freeze-start"
+else
+  bad "freeze-check warns when cutover is missing more than 6 hours after freeze-start (code=$late_code)"
+  printf '%s\n' "$late" | tail -20
+fi
+if [[ "$late_verify_code" -eq 0 && "$late_verify" == *more\ than\ 6\ hours\ ago* ]]; then
+  ok "verify warns when cutover is missing more than 6 hours after freeze-start"
+else
+  bad "verify warns when cutover is missing more than 6 hours after freeze-start (code=$late_verify_code)"
+  printf '%s\n' "$late_verify" | tail -20
+fi
+rm -rf "$WARN_WORK"
 
 echo "== rollback cutoff"
 ROLL2=$(mktemp -d)
@@ -749,6 +897,14 @@ else
   bad "rollback stops 24 hours after cutover, before invitations are revoked (code=$feed_code)"
   printf '%s\n' "$feed_out" | tail -20
 fi
+printf '%s\n' 'yesterday' > "$ROLL2/cutover"
+feed "Clerk secret key" "sk_live_localtest" -- "$SCRIPT" rollback --apply --workdir "$ROLL2"
+if [[ "$feed_code" -ne 0 && "$feed_out" == *cutover\ timestamp\ could\ not\ be\ read* && "$feed_out" != *Type\ the\ database\ name* && "$feed_out" != *revoked* ]]; then
+  ok "a malformed cutover stamp stops rollback before invitations are revoked"
+else
+  bad "a malformed cutover stamp stops rollback before invitations are revoked (code=$feed_code)"
+  printf '%s\n' "$feed_out" | tail -20
+fi
 "${PSQL[@]}" -c "INSERT INTO proposals(id,title,client_name,client_email,content,public_id,created_by,updated_at) VALUES ('p_cut','P','A','a@a','{}','pub_cut','user_devA',now())" >/dev/null
 "${PSQL[@]}" -c "INSERT INTO proposal_events(id,proposal_id,event_type,metadata) VALUES ('e_cut','p_cut','accepted','{\"signerName\":\"x\"}')" >/dev/null
 date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ > "$ROLL2/cutover"
@@ -757,6 +913,16 @@ if [[ "$feed_code" -ne 0 && "$feed_out" == *first\ acceptance\ since\ cutover* &
   ok "rollback stops after the first acceptance since cutover"
 else
   bad "rollback stops after the first acceptance since cutover (code=$feed_code)"
+  printf '%s\n' "$feed_out" | tail -20
+fi
+event_at=$(date -u -d '30 minutes ago' '+%Y-%m-%d %H:%M:%S')
+"${PSQL[@]}" -c "UPDATE proposal_events SET created_at = '${event_at}' WHERE id = 'e_cut'" >/dev/null
+date -u -d '90 minutes ago' +%Y-%m-%dT%H:%M:%SZ > "$ROLL2/cutover"
+feed "Clerk secret key" "sk_live_localtest" -- env PGTZ=Australia/Melbourne "$SCRIPT" rollback --apply --workdir "$ROLL2"
+if [[ "$feed_code" -ne 0 && "$feed_out" == *first\ acceptance\ since\ cutover* && "$feed_out" != *Type\ the\ database\ name* && "$feed_out" != *revoked* ]]; then
+  ok "rollback still sees the acceptance when the session time zone is Melbourne"
+else
+  bad "rollback still sees the acceptance when the session time zone is Melbourne (code=$feed_code)"
   printf '%s\n' "$feed_out" | tail -20
 fi
 "${PSQL[@]}" -c "DELETE FROM proposal_events WHERE id = 'e_cut'" >/dev/null
@@ -838,6 +1004,12 @@ fi
 unset CLERK_SECRET_KEY PGPASSWORD || true
 export PATH="${PATH#"$GIT_STUB:"}"
 rm -rf "$GIT_STUB" "$GIT_WORK"
+
+if grep -E -n 'env[[:space:]].*(PGPASSWORD|CLERK_SECRET_KEY)=' "$SCRIPT"; then
+  bad "secrets are assigned with env, so they can appear in argv"
+else
+  ok "secrets are not assigned with env"
+fi
 
 trap - EXIT
 cleanup_pg
