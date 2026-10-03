@@ -348,28 +348,50 @@ export function getAllPricingBlocks(doc: ProposalDocument): PricingBlock[] {
   );
 }
 
+/**
+ * A client's yes or no for one line. A missing choice keeps the stored boolean.
+ * When nothing is stored, a required line stays included and an optional or
+ * choose-one line stays out.
+ */
+export function clientIncludedValue(
+  choices: Record<string, boolean> | null | undefined,
+  itemId: string,
+  current: unknown,
+  optionsMode: boolean,
+  isOptional: boolean
+): boolean {
+  const chosen = choices?.[itemId];
+  if (typeof chosen === "boolean") return chosen;
+  if (typeof current === "boolean") return current;
+  return !(optionsMode || isOptional);
+}
+
 /** Apply client optional-item choices to all pricing blocks */
 export function applyClientChoices(
   doc: ProposalDocument,
-  clientIncluded: Record<string, boolean>
+  clientIncluded: Record<string, boolean> | null | undefined
 ): ProposalDocument {
+  const choices = clientIncluded ?? {};
   return {
     ...doc,
     pages: doc.pages.map((page) => ({
       ...page,
       blocks: page.blocks.map((block) => {
         if (block.type !== "pricing") return block;
+        const optionsMode = block.pricingSettings.optionsMode === true;
         return {
           ...block,
           pricingData: {
             ...block.pricingData,
             items: block.pricingData.items.map((item) => ({
               ...item,
-              clientIncluded: block.pricingSettings.optionsMode
-                ? (clientIncluded[item.id] ?? item.clientIncluded)
-                : item.isOptional
-                  ? (clientIncluded[item.id] ?? item.clientIncluded)
-                  : true,
+              clientIncluded: clientIncludedValue(
+                choices,
+                item.id,
+                item.clientIncluded,
+                optionsMode,
+                item.isOptional === true
+              ),
             })),
           },
         };

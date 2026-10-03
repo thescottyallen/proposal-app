@@ -11,6 +11,7 @@ import { useState } from "react";
 import { Toolbar } from "./Toolbar";
 import { ContentBlockPicker } from "./ContentBlockPicker";
 import type { RichTextBlock as RichTextBlockType } from "@/lib/proposal-document";
+import { linkedImageHref } from "@/lib/public-proposal";
 
 const PROSE =
   "prose prose-sm sm:prose-base max-w-none focus:outline-none min-h-[120px]" +
@@ -58,8 +59,9 @@ const LinkedImage = Image.extend({
     // Strip undefined keys
     Object.keys(imgAttrs).forEach((k) => imgAttrs[k] === undefined && delete imgAttrs[k]);
 
-    if (href) {
-      return ["a", { href, target: "_blank", rel: "noopener noreferrer" }, ["img", imgAttrs]];
+    const safeHref = linkedImageHref(href);
+    if (safeHref) {
+      return ["a", { href: safeHref, target: "_blank", rel: "noopener noreferrer" }, ["img", imgAttrs]];
     }
     return ["img", imgAttrs];
   },

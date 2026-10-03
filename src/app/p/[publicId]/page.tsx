@@ -8,6 +8,7 @@ import { isProposalDocument } from "@/lib/proposal-document";
 import { pricingDataForClient } from "@/lib/proposal-detail";
 import { publicProposalPayload } from "@/lib/public-proposal";
 import { expiryUpdateWhere, statusAfterUpdate, viewedUpdateWhere } from "@/lib/proposal-accept";
+import { isFirstOpen } from "@/lib/proposal-open";
 
 interface Props {
   params: Promise<{ publicId: string }>;
@@ -83,16 +84,20 @@ export default async function PublicProposalPage({ params }: Props) {
   // Skip tracking if the viewer is the proposal owner
   const isOwner = userId === proposal.createdBy;
   if (!isOwner && ["SENT", "VIEWED"].includes(proposal.status)) {
-    const existingOpenCount = await prisma.proposalEvent.count({
-      where: { proposalId: proposal.id, eventType: "opened" },
-    });
-
-    await prisma.proposalEvent.create({
-      data: { proposalId: proposal.id, eventType: "opened" },
+    // Lock this proposal so two opens at once only send one first-open email.
+    const notifyOwner = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM proposals WHERE id = ${proposal.id} FOR UPDATE`;
+      const existingOpenCount = await tx.proposalEvent.count({
+        where: { proposalId: proposal.id, eventType: "opened" },
+      });
+      await tx.proposalEvent.create({
+        data: { proposalId: proposal.id, eventType: "opened" },
+      });
+      return isFirstOpen(existingOpenCount);
     });
 
     // First open: notify owner and update status to VIEWED
-    if (existingOpenCount === 0) {
+    if (notifyOwner) {
       try {
         const clerk      = await clerkClient();
         const owner      = await clerk.users.getUser(proposal.createdBy);

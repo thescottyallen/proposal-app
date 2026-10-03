@@ -40,36 +40,42 @@ export function ProposalsView({ proposals: initialProposals }: { proposals: Prop
   const patchStatus = async (
     id: string,
     body: { status: string; lostReason: string | null }
-  ): Promise<boolean> => {
+  ): Promise<string | null> => {
     const res = await fetch(`/api/proposals/${id}`, {
       method:  "PATCH",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify(body),
     });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return typeof data.error === "string" ? data.error : "Couldn't update this proposal.";
+    }
     setProposals((prev) =>
       prev.map((p) => (p.id === id ? { ...p, status: body.status } : p))
     );
-    return true;
+    return null;
   };
 
   const confirmMarkLost = async () => {
     if (!lostTarget) return;
     setSavingLost(true);
-    const ok = await patchStatus(lostTarget.id, {
+    const error = await patchStatus(lostTarget.id, {
       status:     "LOST",
       lostReason: lostReason.trim() || null,
     });
     setSavingLost(false);
-    if (ok) {
+    if (!error) {
       setLostTarget(null);
       setLostReason("");
+    } else {
+      window.alert(error);
     }
   };
 
   const reopen = async (proposal: Proposal) => {
     if (!confirm("Reopen this proposal? It will be set back to Draft.")) return;
-    await patchStatus(proposal.id, { status: "DRAFT", lostReason: null });
+    const error = await patchStatus(proposal.id, { status: "DRAFT", lostReason: null });
+    if (error) window.alert(error);
   };
 
   return (

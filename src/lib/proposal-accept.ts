@@ -27,9 +27,20 @@ export function acceptanceGuard(status: string):
   };
 }
 
-/** Conditional write: only a proposal that is still sent or viewed can become accepted. */
-export function acceptanceUpdateFilter(id: string) {
+/** Statuses that may still change on the public page, before acceptance. */
+export function acceptanceStatusFilter(id: string) {
   return { id, status: { in: [...ACCEPTABLE_STATUSES] } };
+}
+
+/**
+ * Accept only while the proposal is still sent or viewed, and only when it
+ * has no expiry or the expiry is still ahead.
+ */
+export function acceptanceUpdateFilter(id: string, now: Date = new Date()) {
+  return {
+    ...acceptanceStatusFilter(id),
+    OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+  };
 }
 
 /**

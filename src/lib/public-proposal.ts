@@ -120,7 +120,80 @@ function publicRichText(value: unknown): unknown {
     if (INTERNAL_JSON_KEYS.has(key)) continue;
     out[key] = publicRichText(child);
   }
-  return out;
+  return withSafeImageHref(out);
+}
+
+function withSafeImageHref(record: Record<string, unknown>): Record<string, unknown> {
+  if (record.type !== "image") return record;
+  const attrs = asRecord(record.attrs);
+  if (!attrs || !("href" in attrs)) return record;
+  const href = publicButtonHref(attrs.href);
+  if (href === attrs.href) return record;
+  const nextAttrs = { ...attrs };
+  if (href) nextAttrs.href = href;
+  else delete nextAttrs.href;
+  return { ...record, attrs: nextAttrs };
+}
+
+/** Address drawn around a linked image. Only https, mailto, and tel are kept. */
+export function linkedImageHref(value: unknown): string | null {
+  return publicButtonHref(value);
+}
+
+/** Drop or rewrite linked-image addresses before they are stored. */
+export function sanitiseProposalContent(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const child = sanitiseProposalContent(item);
+      if (child !== item) changed = true;
+      return child;
+    });
+    return changed ? next : value;
+  }
+  const record = asRecord(value);
+  if (!record) return value;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(record)) {
+    const next = sanitiseProposalContent(child);
+    out[key] = next;
+    if (next !== child) changed = true;
+  }
+  const safe = withSafeImageHref(out);
+  if (safe !== out) return safe;
+  return changed ? out : value;
+}
+
+const BUTTON_SCHEME = /^(https|mailto|tel):/i;
+const ANY_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * A button may open https, mailto, or tel. Other schemes are dropped.
+ * An address with no scheme is treated as https.
+ */
+export function publicButtonHref(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const href = value.trim();
+  if (!href || /[\u0000-\u001F\u007F]/.test(href)) return null;
+  if (href === "https://" || href === "http://") return null;
+  if (/^http:\/\//i.test(href)) return `https://${href.slice("http://".length)}`;
+  if (BUTTON_SCHEME.test(href)) return href;
+  if (ANY_SCHEME.test(href)) return null;
+  return `https://${href}`;
+}
+
+function applyButtonLink(fields: Record<string, unknown>): Record<string, unknown> {
+  const href = publicButtonHref(fields.href);
+  if (href) fields.href = href;
+  else delete fields.href;
+
+  if (typeof fields.targetPageId === "string" && ANY_SCHEME.test(fields.targetPageId.trim())) {
+    const target = publicButtonHref(fields.targetPageId);
+    if (target) fields.targetPageId = target;
+    else delete fields.targetPageId;
+  }
+  return fields;
 }
 
 function copyListed(source: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
@@ -164,7 +237,9 @@ function publicPricingSettings(value: unknown): Record<string, unknown> {
 function publicButton(value: unknown): Record<string, unknown> | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
-  return copyListed(record, ["label", "targetPageId", "linkType", "href", "style", "alignment"]);
+  return applyButtonLink(
+    copyListed(record, ["label", "targetPageId", "linkType", "href", "style", "alignment"])
+  );
 }
 
 function publicColumnCell(value: unknown): Record<string, unknown> | null {
@@ -202,7 +277,9 @@ function publicBlock(value: unknown): Record<string, unknown> | null {
     return {
       type: "button",
       id: record.id,
-      ...copyListed(record, ["label", "targetPageId", "linkType", "href", "style", "alignment"]),
+      ...applyButtonLink(
+        copyListed(record, ["label", "targetPageId", "linkType", "href", "style", "alignment"])
+      ),
       ...background,
     };
   }

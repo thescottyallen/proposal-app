@@ -48,10 +48,10 @@ export async function POST(
       message:       parsed.message,
     });
 
-    // Update status to SENT if it was DRAFT
+    // Only a draft becomes sent, and only while it is still a draft.
     if (proposal.status === "DRAFT") {
-      await prisma.proposal.update({
-        where: { id },
+      await prisma.proposal.updateMany({
+        where: { id, status: "DRAFT" },
         data:  { status: "SENT" },
       });
     }

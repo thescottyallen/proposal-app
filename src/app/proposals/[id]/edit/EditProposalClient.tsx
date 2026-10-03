@@ -347,6 +347,7 @@ export function EditProposalClient({
     force?: boolean;
     auto?: boolean;
     override?: DraftFields;
+    restoring?: boolean;
   }): Promise<SaveResult> => {
     const run = async (): Promise<SaveResult> => {
       const draft = opts?.override ?? draftRef.current;
@@ -368,6 +369,7 @@ export function EditProposalClient({
         content:       draft.document,
         baseUpdatedAt: baseUpdatedAtRef.current,
         force:         opts?.force === true,
+        restoring:     opts?.restoring === true,
       };
       const body = JSON.stringify(payload);
 
@@ -392,6 +394,12 @@ export function EditProposalClient({
         });
         if (res.status === 409) {
           const data = await res.json().catch(() => ({}));
+          if (data.code !== "conflict") {
+            setSavePhase("idle");
+            const message = typeof data.error === "string" ? data.error : "Couldn't save just now.";
+            if (!opts?.auto) showToastRef.current(message);
+            return "error";
+          }
           const at = typeof data.updatedAt === "string" ? data.updatedAt : new Date().toISOString();
           conflictRef.current = true;
           setConflictAt(at);
@@ -524,7 +532,11 @@ export function EditProposalClient({
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ status: "LOST", lostReason: reason }),
       });
-      if (!res.ok) { showToast("Failed to mark as lost"); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(typeof data.error === "string" ? data.error : "Failed to mark as lost");
+        return;
+      }
       const saved = await res.json().catch(() => ({}));
       if (typeof saved.updatedAt === "string") {
         baseUpdatedAtRef.current = saved.updatedAt;
@@ -548,7 +560,11 @@ export function EditProposalClient({
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ status: "DRAFT", lostReason: null }),
       });
-      if (!res.ok) { showToast("Failed to reopen"); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(typeof data.error === "string" ? data.error : "Failed to reopen");
+        return;
+      }
       const saved = await res.json().catch(() => ({}));
       if (typeof saved.updatedAt === "string") {
         baseUpdatedAtRef.current = saved.updatedAt;
@@ -664,7 +680,7 @@ export function EditProposalClient({
         expiresAt:     typeof snap.expiresAt === "string" ? snap.expiresAt.slice(0, 10) : (current?.expiresAt ?? expiresAt),
         document:      documentFromUnknown(contentFromSnapshot(snap), proposal),
       };
-      const result = await saveProposal({ override: draft });
+      const result = await saveProposal({ override: draft, restoring: true });
       if (result === "saved") {
         setShowHistory(false);
         setHistoryPreview(null);
@@ -943,19 +959,15 @@ export function EditProposalClient({
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                {!isAccepted && (
-                  <>
-                    {!conflictAt && <SaveStatusText phase={savePhase} savedAt={savedAt} />}
-                    <button
-                      onClick={() => { void saveProposal(); }}
-                      disabled={saving}
-                      className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                    >
-                      <Save size={14} />
-                      Save
-                    </button>
-                  </>
-                )}
+                {!conflictAt && <SaveStatusText phase={savePhase} savedAt={savedAt} />}
+                <button
+                  onClick={() => { void saveProposal(); }}
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  <Save size={14} />
+                  Save
+                </button>
                 {isAuthor && (
                   <button
                     onClick={() => {
@@ -1114,11 +1126,10 @@ export function EditProposalClient({
               <label className="block text-xs text-gray-500 mb-1">Internal notes (never visible to client)</label>
               <textarea
                 value={internalNotes}
-                onChange={(e) => { if (!isAccepted) { setInternalNotes(e.target.value); setHasChanges(true); } }}
-                readOnly={isAccepted}
+                onChange={(e) => { setInternalNotes(e.target.value); setHasChanges(true); }}
                 rows={2}
                 placeholder="Notes for your reference only..."
-                className={`w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none resize-none ${isAccepted ? "bg-gray-50 cursor-default" : "focus:ring-2 focus:ring-blue-500"}`}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
               />
             </div>
           </div>

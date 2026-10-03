@@ -11,6 +11,7 @@ import {
   isProposalDocument,
   applyClientChoices,
   applyPaymentChoices,
+  clientIncludedValue,
   allPaymentChoicesResolved,
   getAllPricingBlocks,
   paymentAcceptanceRecords,
@@ -19,8 +20,10 @@ import {
 } from "@/lib/proposal-document";
 import { defaultPricingSettings, type ProposalPricingData, type ProposalPricingSettings } from "@/lib/pricing-types";
 import { buildAgreedSummary, type AgreedSummary } from "@/lib/agreed-summary";
+import { sanitiseProposalContent } from "@/lib/public-proposal";
 import {
   acceptanceGuard,
+  acceptanceStatusFilter,
   acceptanceUpdateFilter,
   parseClientAbn,
   parseClientIncluded,
@@ -51,7 +54,7 @@ export async function POST(
 
   if (proposal.expiresAt && new Date(proposal.expiresAt) < new Date()) {
     await prisma.proposal.updateMany({
-      where: acceptanceUpdateFilter(id),
+      where: acceptanceStatusFilter(id),
       data: { status: "EXPIRED" },
     });
     return NextResponse.json(
@@ -119,7 +122,7 @@ export async function POST(
         { status: 400 }
       );
     }
-    contentUpdate = updatedDoc as unknown as Record<string, unknown>;
+    contentUpdate = sanitiseProposalContent(updatedDoc) as Record<string, unknown>;
     paymentRecords = paymentAcceptanceRecords(updatedDoc);
     agreedDoc = updatedDoc;
     // Recompute the accepted total from the client's final choices. The figure
@@ -138,9 +141,13 @@ export async function POST(
         ...existingPricing,
         items: existingPricing.items.map((item) => ({
           ...item,
-          clientIncluded: item.isOptional
-            ? ((clientIncluded ?? {})[item.id] ?? item.clientIncluded)
-            : true,
+          clientIncluded: clientIncludedValue(
+            clientIncluded,
+            item.id,
+            item.clientIncluded,
+            false,
+            item.isOptional === true
+          ),
         })),
       };
     }
