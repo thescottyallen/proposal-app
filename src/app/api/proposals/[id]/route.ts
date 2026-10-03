@@ -32,6 +32,27 @@ function computeDocumentTotal(doc: ProposalDocument): number {
   return total;
 }
 
+interface ProposalPatchBody {
+  title?: string;
+  clientName?: string;
+  clientEmail?: string;
+  clientAbn?: string | null;
+  content?: Prisma.InputJsonValue;
+  status?: string;
+  expiresAt?: string | null;
+  internalNotes?: string | null;
+  lostReason?: string | null;
+  pricingData?: Parameters<typeof computePricingTotals>[0];
+  pricingSettings?: ProposalPricingSettings;
+  baseUpdatedAt?: string | null;
+  force?: boolean;
+}
+
+function readProposalPatch(value: unknown): ProposalPatchBody {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as ProposalPatchBody;
+}
+
 /** Extract the first pricing block's settings (for the flat currency column) */
 function firstPricingSettings(doc: ProposalDocument): ProposalPricingSettings | null {
   const blocks = getAllPricingBlocks(doc);
@@ -69,15 +90,13 @@ export async function PATCH(
   });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  let body: unknown;
+  let parsed: unknown;
   try {
-    body = await request.json();
+    parsed = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
-  const record = body && typeof body === "object" && !Array.isArray(body)
-    ? body as Record<string, any>
-    : {};
+  const record = readProposalPatch(parsed);
   const {
     title, clientName, clientEmail, clientAbn,
     content, status, expiresAt, internalNotes, lostReason,
@@ -165,7 +184,7 @@ export async function PATCH(
       ...(clientEmail   !== undefined && { clientEmail }),
       ...(clientAbn     !== undefined && { clientAbn }),
       ...(content       !== undefined && { content }),
-      ...(changingStatus && { status }),
+      ...(changingStatus && { status: status as typeof existing.status }),
       ...(totalValue    !== undefined && { totalValue }),
       ...(expiresAt     !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null }),
       ...(internalNotes !== undefined && { internalNotes }),
